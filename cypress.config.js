@@ -10,14 +10,53 @@ module.exports = defineConfig({
       on('task', {
         readExcel({ filePath }) {
           try {
+            console.log('Reading Excel file from:', filePath);
             const absolutePath = path.resolve(filePath);
+            console.log('Absolute path:', absolutePath);
+            
             if (!fs.existsSync(absolutePath)) {
+              console.log('❌ Excel file not found at:', absolutePath);
               return null;
             }
+            
+            console.log('Reading workbook...');
             const workbook = XLSX.readFile(absolutePath);
+            console.log('Available sheets:', workbook.SheetNames);
+            
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            
+            console.log('Converting to JSON...');
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+              header: 1,
+              raw: true,
+              defval: ''
+            });
+
+            jsonData.slice(1).forEach(row => {
+              if (Array.isArray(row)) {
+                for (let i = 2; i <= 6; i++) {
+                  if (row[i] !== undefined && row[i] !== '') {
+                    row[i] = row[i].toString().replace('px', '').trim();
+                  }
+                }
+                if (row[8] !== undefined && row[8] !== '') {
+                  row[8] = row[8].toString().trim();
+                }
+              }
+            });
+
+            console.log('Excel Data Structure:');
+            console.log('Number of rows:', jsonData.length);
+            console.log('Headers:', jsonData[0]);
+            console.log('First data row:', jsonData[1]);
+            console.log('Second data row:', jsonData[2]);
+            
+            const headers = jsonData[0];
+            headers.forEach((header, index) => {
+              console.log(`Column ${index}: "${header}"`);
+            });
+
             return jsonData;
           } catch (err) {
             console.error('Error reading Excel file:', err);
@@ -27,7 +66,6 @@ module.exports = defineConfig({
         writeExcelSheets({ data, filename }) {
           return new Promise((resolve, reject) => {
             try {
-              // Ensure directory exists
               const outputPath = path.resolve(filename);
               const dirPath = path.dirname(outputPath);
 
@@ -35,24 +73,20 @@ module.exports = defineConfig({
                 fs.mkdirSync(dirPath, { recursive: true });
               }
 
-              // Create new workbook
               const workbook = {
                 SheetNames: [],
                 Sheets: {}
               };
 
-              // For each viewport, add a sheet with its data
               Object.entries(data).forEach(([sheetName, sheetData]) => {
                 if (!sheetData || !Array.isArray(sheetData) || sheetData.length === 0) {
                   console.log(`⚠️ No data for sheet "${sheetName}", skipping sheet creation.`);
                   return;
                 }
 
-                // Create worksheet manually
                 const worksheet = {};
                 const range = { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
 
-                // Get all possible columns from the data
                 const columns = new Set();
                 sheetData.forEach(row => {
                   if (row && typeof row === 'object') {
@@ -61,7 +95,6 @@ module.exports = defineConfig({
                 });
                 const columnArray = Array.from(columns);
 
-                // Add header row
                 columnArray.forEach((col, idx) => {
                   const cellRef = XLSX.utils.encode_cell({ r: 0, c: idx });
                   worksheet[cellRef] = {
@@ -74,7 +107,6 @@ module.exports = defineConfig({
                   range.e.c = Math.max(range.e.c, idx);
                 });
 
-                // Add data rows
                 sheetData.forEach((row, rowIdx) => {
                   if (!row || typeof row !== 'object') return;
 
@@ -82,31 +114,42 @@ module.exports = defineConfig({
                     const cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
                     const value = row[col];
 
-                    // Initialize cell with value and type
                     worksheet[cellRef] = {
                       v: value || '',
                       t: typeof value === 'number' ? 'n' : 's',
-                      s: {} // Initialize style object
+                      s: {}
                     };
 
-                    // Apply styling for mismatches
-                    if (col === 'Status' && value && value.includes('Mismatch')) {
-                      worksheet[cellRef].s = {
-                        fill: {
-                          patternType: 'solid',
-                          fgColor: { rgb: 'FF0000' }
-                        },
-                        font: {
-                          bold: false,
-                          color: { rgb: '#000000' }
-                        }
-                      };
+                    if (col === 'Status' && value) {
+                      if (value.includes('Mismatch')) {
+                        worksheet[cellRef].s = {
+                          fill: {
+                            patternType: 'solid',
+                            fgColor: { rgb: 'FF0000' }
+                          },
+                          font: {
+                            bold: false,
+                            color: { rgb: '#000000' }
+                          }
+                        };
+                      } else if (value.includes('No Line Height in Guide')) {
+                        worksheet[cellRef].s = {
+                          fill: {
+                            patternType: 'solid',
+                            fgColor: { rgb: 'FFFF00' }
+                          },
+                          font: {
+                            bold: false,
+                            color: { rgb: '#000000' }
+                          }
+                        };
+                      }
 
-                      // Style the mismatched value cells
                       const mismatchTypes = {
                         'Font Size': ['Expected_fontSize', 'Actual_fontSize'],
                         'Font Weight': ['Expected_fontWeight', 'Actual_fontWeight'],
-                        'Font Family': ['Expected_fontFamily', 'Actual_fontFamily']
+                        'Font Family': ['Expected_fontFamily', 'Actual_fontFamily'],
+                        'Line Height': ['Expected_lineHeight', 'Actual_lineHeight'],
                       };
 
                       Object.entries(mismatchTypes).forEach(([type, cols]) => {
@@ -115,7 +158,6 @@ module.exports = defineConfig({
                             const colIdx = columnArray.indexOf(colName);
                             if (colIdx !== -1) {
                               const mismatchCellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
-                              // Ensure the cell exists and has a style object
                               if (!worksheet[mismatchCellRef]) {
                                 worksheet[mismatchCellRef] = {
                                   v: row[colName] || '',
@@ -142,15 +184,11 @@ module.exports = defineConfig({
                   range.e.r = Math.max(range.e.r, rowIdx + 1);
                 });
 
-                // Set worksheet range
                 worksheet['!ref'] = XLSX.utils.encode_range(range);
-
-                // Add the worksheet to the workbook
                 workbook.SheetNames.push(sheetName);
                 workbook.Sheets[sheetName] = worksheet;
               });
 
-              // Write to file
               XLSX.writeFile(workbook, outputPath);
               console.log(`✅ Excel file with multiple sheets written to: ${outputPath}`);
               resolve(null);
@@ -159,8 +197,10 @@ module.exports = defineConfig({
               reject(err);
             }
           });
-        },
+        }
       });
-    },
-  },
+
+      return config;
+    }
+  }
 });
