@@ -140,37 +140,38 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                 };
 
                 const columnName = viewportToColumnMap[view.name];
-                const expectedFontSize = expected[columnName] || '';
-                
-                // Calculate expected line height based on the font size
-                const expectedLineHeight = calculateLineHeight(expected.lineHeight, expectedFontSize);
+                const expectedFontSize = expected[columnName] || '-';
+                const expectedLineHeight = expected.lineHeight ? calculateLineHeight(expected.lineHeight, expectedFontSize) : '-';
                 const actualLineHeight = normalizeFontSize(actual.lineHeight);
+                const expectedFontWeight = expected.fontWeight || '-';
+                const expectedFontFamily = expected.fontFamily || '-';
 
-                const isFontFamilyMatch = actual.fontFamily.includes(expected.fontFamily);
-                const isFontSizeMatch = normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
-                const isFontWeightMatch = actual.fontWeight.toString() === expected.fontWeight?.toString();
-                const isLineHeightMatch = actualLineHeight === expectedLineHeight;
+                // Only compare if expected values exist (not '-')
+                const isFontFamilyMatch = expectedFontFamily === '-' ? true : actual.fontFamily.includes(expectedFontFamily);
+                const isFontSizeMatch = expectedFontSize === '-' ? true : normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
+                const isFontWeightMatch = expectedFontWeight === '-' ? true : actual.fontWeight.toString() === expectedFontWeight.toString();
+                const isLineHeightMatch = expectedLineHeight === '-' ? true : actualLineHeight === expectedLineHeight;
 
                 let mismatchDetails = [];
                 if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
                 if (!isFontSizeMatch) mismatchDetails.push('Font Size');
-                if (!isLineHeightMatch && expected.lineHeight) mismatchDetails.push('Line Height');
-                if (!isFontWeightMatch && expected.fontWeight) mismatchDetails.push('Font Weight');
+                if (!isLineHeightMatch) mismatchDetails.push('Line Height');
+                if (!isFontWeightMatch) mismatchDetails.push('Font Weight');
 
                 const status = mismatchDetails.length === 0 ? 'Match' : `Mismatch: ${mismatchDetails.join(', ')}`;
                 
                 resultsByViewport[view.name].push({
                   Selector: selector,
-                  Variant: expected.variant || '',
+                  Variant: expected.variant || '-',
                   Text: $element.text().trim().slice(0, 50),
                   Status: status,
-                  Expected_fontSize: expectedFontSize,
+                  Expected_fontSize: expectedFontSize === '-' ? 'Not Found' : expectedFontSize,
                   Actual_fontSize: actual.fontSize,
-                  Expected_lineHeight: expected.lineHeight ? `${expected.lineHeight} (Computed: ${expectedLineHeight}px)` : '',
+                  Expected_lineHeight: expected.lineHeight ? `${expected.lineHeight} (Computed: ${expectedLineHeight}px)` : 'Not Found',
                   Actual_lineHeight: actual.lineHeight,
-                  Expected_fontWeight: expected.fontWeight || '',
+                  Expected_fontWeight: expectedFontWeight === '-' ? 'Not Found' : expectedFontWeight,
                   Actual_fontWeight: actual.fontWeight,
-                  Expected_fontFamily: expected.fontFamily || '',
+                  Expected_fontFamily: expectedFontFamily === '-' ? 'Not Found' : expectedFontFamily,
                   Actual_fontFamily: actual.fontFamily
                 });
               });
