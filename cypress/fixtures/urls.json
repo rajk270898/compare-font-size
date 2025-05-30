@@ -1,3 +1,24 @@
 {
-  "homepage": "https://www.huebnermarketing.com/"
+  "urls": [
+    {
+      "name": "Homepage",
+      "url": "https://www.huebnermarketing.com/"
+    },
+    {
+      "name": "Team",
+      "url": "https://www.huebnermarketing.com/team"
+    },
+    {
+      "name": "Capabilities",
+      "url": "https://www.huebnermarketing.com/capabilities/"
+    },
+    {
+      "name": "Portfolio",
+      "url": "https://www.huebnermarketing.com/portfolio/"
+    },
+    {
+      "name": "Resource-Hub",
+      "url": "https://www.huebnermarketing.com/resource-hub/"
+    }
+  ]
 } 

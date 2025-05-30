@@ -5,7 +5,8 @@ const { defineConfig } = require('cypress');
 
 module.exports = defineConfig({
   e2e: {
-    baseUrl: 'https://www.rehabclinics.com',
+    defaultCommandTimeout: 10000,
+    pageLoadTimeout: 30000,
     setupNodeEvents(on, config) {
       on('task', {
         readExcel({ filePath }) {
