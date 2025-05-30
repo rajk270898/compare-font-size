@@ -32,6 +32,22 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
     return value?.replace('px', '').trim();
   }
 
+  function calculateLineHeight(lineHeightValue, fontSize) {
+    // If line height contains 'px', return it directly
+    if (lineHeightValue?.includes('px')) {
+      return normalizeFontSize(lineHeightValue);
+    }
+    // If it's a multiplier (like 1.3), multiply with font size
+    const multiplier = parseFloat(lineHeightValue);
+    if (!isNaN(multiplier) && fontSize) {
+      const baseFontSize = parseFloat(normalizeFontSize(fontSize));
+      if (!isNaN(baseFontSize)) {
+        return Math.round(multiplier * baseFontSize).toString();
+      }
+    }
+    return lineHeightValue;
+  }
+
   before(() => {
     cy.task('readExcel', {
       filePath: './cypress/fixtures/Style Guide.xlsx',
@@ -60,7 +76,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
           Tablet: row[5]?.trim(),//991
           SmallTablet: row[6]?.trim(),//767
           Mobile: row[7]?.trim(), //575
-          // SmallMobile: row[-]?.trim(),
+          SmallMobile: row[7]?.trim(),
           fontWeight: row[8]?.toString().trim(),
           lineHeight: row[9]?.toString().trim(),
           variant: row[10],
@@ -97,8 +113,8 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
               Text: '',
               Expected_fontSize: '',
               Actual_fontSize: '',
-              Actual_lineHeight: '',
               Expected_lineHeight: '',
+              Actual_lineHeight: '',
               Expected_fontWeight: '',
               Actual_fontWeight: '',
               Expected_fontFamily: '',
@@ -125,16 +141,20 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
                 const columnName = viewportToColumnMap[view.name];
                 const expectedFontSize = expected[columnName] || '';
+                
+                // Calculate expected line height based on the font size
+                const expectedLineHeight = calculateLineHeight(expected.lineHeight, expectedFontSize);
+                const actualLineHeight = normalizeFontSize(actual.lineHeight);
 
                 const isFontFamilyMatch = actual.fontFamily.includes(expected.fontFamily);
                 const isFontSizeMatch = normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
                 const isFontWeightMatch = actual.fontWeight.toString() === expected.fontWeight?.toString();
-                const isLineHeightMatch = normalizeFontSize(actual.lineHeight) === normalizeFontSize(expected.lineHeight);
+                const isLineHeightMatch = actualLineHeight === expectedLineHeight;
 
                 let mismatchDetails = [];
                 if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
                 if (!isFontSizeMatch) mismatchDetails.push('Font Size');
-                if (!isLineHeightMatch) mismatchDetails.push('Line Height');
+                if (!isLineHeightMatch && expected.lineHeight) mismatchDetails.push('Line Height');
                 if (!isFontWeightMatch && expected.fontWeight) mismatchDetails.push('Font Weight');
 
                 const status = mismatchDetails.length === 0 ? 'Match' : `Mismatch: ${mismatchDetails.join(', ')}`;
@@ -146,7 +166,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                   Status: status,
                   Expected_fontSize: expectedFontSize,
                   Actual_fontSize: actual.fontSize,
-                  Expected_lineHeight: expected.lineHeight || '',
+                  Expected_lineHeight: expected.lineHeight ? `${expected.lineHeight} (Computed: ${expectedLineHeight}px)` : '',
                   Actual_lineHeight: actual.lineHeight,
                   Expected_fontWeight: expected.fontWeight || '',
                   Actual_fontWeight: actual.fontWeight,
