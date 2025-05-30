@@ -5,13 +5,14 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
   const viewports = [
     { name: '4k Screen', width: 2560, height: 1440 },
-    // { name: 'Normal Screen', width: 1920, height: 1080 },
-    // { name: 'Desktop', width: 1440, height: 900 },
-    { name: 'Laptop', width: 1365, height: 800 },
-    // { name: 'Small Laptop', width: 1200, height: 800 },
-    // { name: 'Mobile', width: 990, height: 800 },
-    { name: 'Small Mobile', width: 766, height: 800 },
-    // { name: 'Smaller Mobile', width: 431, height: 800 },
+    { name: 'Normal Screen', width: 1920, height: 1080 },
+    { name: 'Desktop', width: 1440, height: 900 },
+    { name: 'Laptop', width: 1366, height: 800 },
+    { name: 'Small Laptop', width: 1200, height: 800 },
+    { name: 'Tablet', width: 1024, height: 768 },
+    { name: 'Small Tablet', width: 990, height: 800 },
+    { name: 'Mobile', width: 766, height: 800 },
+    { name: 'Small Mobile', width: 430, height: 800 },
   ];
 
   // Map viewport names to Excel columns for expected font size
@@ -20,10 +21,11 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
     'Normal Screen': 'Desktop',
     'Desktop': 'Desktop',
     'Laptop': 'Laptop',
+    'Small Laptop': 'Laptop',
     'Tablet': 'Tablet',
+    'Small Tablet': 'Tablet',
     'Mobile': 'Mobile',
     'Small Mobile': 'SmallMobile',
-    'Smaller Mobile': 'SmallMobile',
   };
 
   function normalizeFontSize(value) {
@@ -32,7 +34,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
   before(() => {
     cy.task('readExcel', {
-      filePath: './cypress/fixtures/Rehabiliation HubSpot Website - Style Guide.xlsx',
+      filePath: './cypress/fixtures/Style Guide.xlsx',
     }).then(data => {
       fontRules = {};
       
@@ -52,15 +54,16 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
         const rule = {
           fontFamily: row[1]?.trim(),
-          Desktop: row[2]?.split('/')[0]?.trim(),
-          Laptop: row[3]?.trim(),
-          Tablet: row[4]?.trim(),
-          Mobile: row[5]?.trim(),
-          SmallMobile: row[6]?.trim(),
-          fontWeight: row[7]?.toString().trim(),
-          lineHeight: row[8]?.trim() || '',
-          variant: row[9]?.trim() || '',
-        
+          Desktop: row[2]?.split('/')[0]?.trim(), //1920
+          Laptop: row[3]?.trim(), //1700
+          SmallLaptop: row[4]?.trim(),//1200
+          Tablet: row[5]?.trim(),//991
+          SmallTablet: row[6]?.trim(),//767
+          Mobile: row[7]?.trim(), //575
+          // SmallMobile: row[-]?.trim(),
+          fontWeight: row[8]?.toString().trim(),
+          lineHeight: row[9]?.toString().trim(),
+          variant: row[10],
         };
 
         if (!fontRules[selector]) {
@@ -125,14 +128,14 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
                 const isFontFamilyMatch = actual.fontFamily.includes(expected.fontFamily);
                 const isFontSizeMatch = normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
-                const isFontWeightMatch = actual.fontWeight === expected.fontWeight;
+                const isFontWeightMatch = actual.fontWeight.toString() === expected.fontWeight?.toString();
                 const isLineHeightMatch = normalizeFontSize(actual.lineHeight) === normalizeFontSize(expected.lineHeight);
 
                 let mismatchDetails = [];
                 if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
                 if (!isFontSizeMatch) mismatchDetails.push('Font Size');
                 if (!isLineHeightMatch) mismatchDetails.push('Line Height');
-                if (!isFontWeightMatch) mismatchDetails.push('Font Weight');
+                if (!isFontWeightMatch && expected.fontWeight) mismatchDetails.push('Font Weight');
 
                 const status = mismatchDetails.length === 0 ? 'Match' : `Mismatch: ${mismatchDetails.join(', ')}`;
                 
