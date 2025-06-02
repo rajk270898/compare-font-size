@@ -15,16 +15,15 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
   }
 
   function normalizeFontSize(value) {
-    if (!value) return '';
-    return value.toString().replace(/px/gi, '').trim();
+    return value?.replace(/px/gi, '').trim();
   }
 
   function calculateLineHeight(lineHeightValue, fontSize) {
-    if (!lineHeightValue || lineHeightValue === '-') return '-';
+    if (!lineHeightValue) return '-';
     
     // If line height contains 'px', return it directly
     if (lineHeightValue.toString().includes('px')) {
-      return lineHeightValue.toString().replace(/px/gi, '').trim() + 'px';
+      return lineHeightValue.toString().replace(/px/gi, '').trim();
     }
     
     // If it's a multiplier (like 1.3), multiply with font size
@@ -169,6 +168,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
             
             cy.document().then(doc => {
               const elements = doc.querySelectorAll(selector);
+              
               if (elements.length === 0) {
                 resultsByViewport[view.name].push({
                   Selector: selector,
@@ -184,77 +184,90 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                   Actual_fontFamily: '',
                   Variant: ''
                 });
-                // cy.log(`Selector "${selector}" not found on viewport ${view.name}.`);
                 return;
               }
 
               const rulesForSelector = fontRules[selector];
 
               rulesForSelector.forEach(expected => {
-                cy.wrap(elements).each(($el, index) => {
-                  // Ensure element is still in DOM and wait for it to be visible
+                cy.wrap(elements).each(($el) => {
                   cy.wrap($el).should('exist').then($element => {
                     let computedStyle;
                     try {
                       if (!$element || !$element[0]) {
-                        // cy.log(`Element not found for selector "${selector}"`);
                         return;
                       }
+
+                      // Get computed style for the element
                       computedStyle = window.getComputedStyle($element[0]);
-                      if (!computedStyle) {
-                        // cy.log(`Could not get computed style for selector "${selector}"`);
-                        return;
+
+                      // If this is a div, check its children for the largest font size
+                      if ($element[0].tagName === 'DIV') {
+                        let maxFontSize = parseInt(computedStyle.fontSize);
+                        let elementWithMaxFont = $element[0];
+
+                        // Check immediate children only
+                        Array.from($element[0].children).forEach(child => {
+                          const childStyle = window.getComputedStyle(child);
+                          const fontSize = parseInt(childStyle.fontSize);
+                          if (fontSize > maxFontSize) {
+                            maxFontSize = fontSize;
+                            elementWithMaxFont = child;
+                          }
+                        });
+
+                        computedStyle = window.getComputedStyle(elementWithMaxFont);
                       }
+
+                      const actual = {
+                        fontSize: computedStyle.fontSize || '',
+                        lineHeight: computedStyle.lineHeight || '',
+                        fontWeight: computedStyle.fontWeight || '',
+                        fontFamily: computedStyle.fontFamily || '',
+                      };
+
+                      const expectedFontSize = expected[view.name] || '-';
+                      const expectedLineHeight = expected.lineHeight || '-';
+                      const computedLineHeight = calculateLineHeight(expectedLineHeight, expectedFontSize);
+                      const expectedFontWeight = expected.fontWeight || '-';
+                      const expectedFontFamily = expected.fontFamily || '-';
+
+                      // Compare values
+                      const isFontSizeMatch = expectedFontSize === '-' ? true : 
+                        normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
+                      const isFontWeightMatch = expectedFontWeight === '-' ? true : 
+                        actual.fontWeight.toString() === expectedFontWeight.toString();
+                      const isLineHeightMatch = expectedLineHeight === '-' ? true : 
+                        normalizeFontSize(actual.lineHeight) === normalizeFontSize(computedLineHeight);
+                      const isFontFamilyMatch = expectedFontFamily === '-' ? true : 
+                        actual.fontFamily.toLowerCase().includes(expectedFontFamily.toLowerCase());
+
+                      const mismatchDetails = [];
+                      if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
+                      if (!isFontSizeMatch) mismatchDetails.push('Font Size');
+                      if (!isLineHeightMatch) mismatchDetails.push('Line Height');
+                      if (!isFontWeightMatch) mismatchDetails.push('Font Weight');
+
+                      const status = mismatchDetails.length === 0 ? 'Match' : 
+                        `Mismatch: ${mismatchDetails.join(', ')}`;
+
+                      resultsByViewport[view.name].push({
+                        Selector: selector,
+                        Status: status,
+                        Text: $element.text().trim().slice(0, 50),
+                        Expected_fontSize: expectedFontSize === '-' ? 'Not Found' : expectedFontSize,
+                        Actual_fontSize: actual.fontSize,
+                        Expected_lineHeight: expectedLineHeight === '-' ? 'Not Found' : computedLineHeight,
+                        Actual_lineHeight: actual.lineHeight,
+                        Expected_fontWeight: expectedFontWeight === '-' ? 'Not Found' : expectedFontWeight,
+                        Actual_fontWeight: actual.fontWeight,
+                        Expected_fontFamily: expectedFontFamily === '-' ? 'Not Found' : expectedFontFamily,
+                        Actual_fontFamily: actual.fontFamily,
+                        Variant: expected.variant || '-'
+                      });
                     } catch (e) {
-                      cy.log(`Error getting computed style for selector "${selector}":`, e);
-                      return;
+                      cy.log(`Error processing element: ${e.message}`);
                     }
-
-                    const actual = {
-                      fontSize: computedStyle.fontSize || '',
-                      lineHeight: computedStyle.lineHeight || '',
-                      fontWeight: computedStyle.fontWeight || '',
-                      fontFamily: computedStyle.fontFamily || '',
-                    };
-
-                    const columnName = viewports.find(v => v.name === view.name)?.name || '-';
-                    const expectedFontSize = expected[columnName] || '-';
-                    const expectedLineHeight = expected.lineHeight || '-';
-                    const computedLineHeight = calculateLineHeight(expectedLineHeight, expectedFontSize);
-                    const actualLineHeight = normalizeFontSize(actual.lineHeight);
-                    const expectedFontWeight = expected.fontWeight || '-';
-                    const expectedFontFamily = expected.fontFamily || '-';
-
-                    // Only compare if expected values exist (not '-')
-                    const isFontFamilyMatch = expectedFontFamily === '-' ? true : 
-                      actual.fontFamily.toLowerCase().includes(expectedFontFamily.toLowerCase());
-                    const isFontSizeMatch = expectedFontSize === '-' ? true : compareFontSizes(expectedFontSize, actual.fontSize);
-                    const isFontWeightMatch = expectedFontWeight === '-' ? true : actual.fontWeight.toString() === expectedFontWeight.toString();
-                    const isLineHeightMatch = expectedLineHeight === '-' ? true : 
-                      normalizeFontSize(actual.lineHeight) === normalizeFontSize(computedLineHeight);
-
-                    let mismatchDetails = [];
-                    if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
-                    if (!isFontSizeMatch) mismatchDetails.push('Font Size');
-                    if (!isLineHeightMatch) mismatchDetails.push('Line Height');
-                    if (!isFontWeightMatch) mismatchDetails.push('Font Weight');
-
-                    const status = mismatchDetails.length === 0 ? 'Match' : `Mismatch: ${mismatchDetails.join(', ')}`;
-                    
-                    resultsByViewport[view.name].push({
-                      Selector: selector,
-                      Status: status,
-                      Text: $element.text().trim().slice(0, 50),
-                      Expected_fontSize: expectedFontSize === '-' ? 'Not Found' : expectedFontSize,
-                      Actual_fontSize: actual.fontSize,
-                      Expected_lineHeight: expectedLineHeight === '-' ? 'Not Found' : computedLineHeight,
-                      Actual_lineHeight: actual.lineHeight,
-                      Expected_fontWeight: expectedFontWeight === '-' ? 'Not Found' : expectedFontWeight,
-                      Actual_fontWeight: actual.fontWeight,
-                      Expected_fontFamily: expectedFontFamily === '-' ? 'Not Found' : expectedFontFamily,
-                      Actual_fontFamily: actual.fontFamily,
-                      Variant: expected.variant || '-'
-                    });
                   });
                 });
               });
