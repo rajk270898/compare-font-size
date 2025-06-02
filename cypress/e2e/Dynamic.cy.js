@@ -1,32 +1,21 @@
 describe('Responsive Font Style Checker with Variants and Sheets', () => {
-  // Increase test timeout to 5 minutes
-  Cypress.config('defaultCommandTimeout', 300000);
-  Cypress.config('pageLoadTimeout', 300000);
+  Cypress.config('defaultCommandTimeout', 3000000);
+  Cypress.config('pageLoadTimeout', 3000000);
 
   let fontRules = {};
   let resolutionColumns = [];
   let viewports = [];
 
-  // Function to detect if a value represents a resolution
-  function isResolution(value) {
-    // Remove 'px' and try to parse as number
-    const num = parseInt(value?.toString().replace(/px/gi, ''));
-    return !isNaN(num) && num > 0;
-  }
-
   function normalizeFontSize(value) {
-    return value?.replace(/px/gi, '').trim();
+    if (!value) return '';
+    return value.toString().replace(/px/gi, '').trim();
   }
 
   function calculateLineHeight(lineHeightValue, fontSize) {
-    if (!lineHeightValue) return '-';
-    
-    // If line height contains 'px', return it directly
+    if (!lineHeightValue || lineHeightValue === '-') return '-';
     if (lineHeightValue.toString().includes('px')) {
-      return lineHeightValue.toString().replace(/px/gi, '').trim();
+      return lineHeightValue.toString().replace(/px/gi, '').trim() + 'px';
     }
-    
-    // If it's a multiplier (like 1.3), multiply with font size
     const multiplier = parseFloat(lineHeightValue);
     if (!isNaN(multiplier) && fontSize) {
       const baseFontSize = parseFloat(fontSize.toString().replace(/px/gi, '').trim());
@@ -37,138 +26,197 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
     return lineHeightValue.toString();
   }
 
-  function compareFontSizes(expected, actual) {
-    const normalizedExpected = normalizeFontSize(expected);
-    const normalizedActual = normalizeFontSize(actual);
-    return normalizedExpected === normalizedActual;
+  function isResolution(value) {
+    if (!value) return false;
+    const cleaned = value.toString().replace(/px/gi, '').trim();
+    const num = parseInt(cleaned);
+    return !isNaN(num) && num > 0;
   }
 
-  // Function to create viewport config from resolution
   function createViewportConfig(resolution) {
     const width = parseInt(resolution.replace(/px/gi, ''));
-    // Default height calculation, adjust if needed
     const height = Math.min(Math.round(width * 0.75), 1440);
     return {
-      name: resolution,  // Keep the original resolution string (e.g., "1920px")
+      name: resolution,
       width: width,
       height: height
     };
   }
 
+  function getComputedStyleForElement(rootElement) {
+    if (!rootElement) {
+      console.error('getComputedStyleForElement called with null rootElement');
+      return null;
+    }
+
+    let maxFontSize = -1;
+    let styleOfElementWithMaxFont = null;
+    let textContentOfElementWithMaxFont = '';
+    let elementWithMaxFontDetails = {};
+
+    function findStyleRecursive(currentElement) {
+      if (!(currentElement instanceof HTMLElement)) return;
+
+      // Skip blank divs or elements without visible direct text nodes
+      if (
+        currentElement.tagName.toLowerCase() === 'div' &&
+        !Array.from(currentElement.childNodes).some(
+          (node) =>
+            node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0
+        )
+      ) {
+        return;
+      }
+
+      const style = window.getComputedStyle(currentElement);
+      const fontSizeString = style.fontSize;
+
+      let directTextContent = '';
+      for (const node of currentElement.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          directTextContent += node.textContent.trim() + ' ';
+        }
+      }
+      directTextContent = directTextContent.trim();
+
+      const hasDirectVisibleText = directTextContent.length > 0;
+
+      if (hasDirectVisibleText) {
+        const fontSize = parseFloat(fontSizeString);
+        if (!isNaN(fontSize) && fontSize > maxFontSize) {
+          maxFontSize = fontSize;
+          styleOfElementWithMaxFont = style;
+          textContentOfElementWithMaxFont = directTextContent;
+          elementWithMaxFontDetails = {
+            tag: currentElement.tagName,
+            id: currentElement.id,
+            classes: currentElement.className ? currentElement.className.toString() : '',
+            text: directTextContent.substring(0, 100),
+            fontSize: fontSizeString
+          };
+        }
+      }
+
+      for (const child of currentElement.children) {
+        if (child instanceof HTMLElement) {
+          findStyleRecursive(child);
+        }
+      }
+    }
+
+    findStyleRecursive(rootElement);
+
+    if (styleOfElementWithMaxFont) {
+      return {
+        style: styleOfElementWithMaxFont,
+        textContent: textContentOfElementWithMaxFont,
+        elementTag: elementWithMaxFontDetails.tag,
+        elementClasses: elementWithMaxFontDetails.classes
+      };
+    } else {
+      const rootStyle = window.getComputedStyle(rootElement);
+      const rootText = rootElement.textContent.trim();
+      return {
+        style: rootStyle,
+        textContent: rootText,
+        elementTag: rootElement.tagName,
+        elementClasses: rootElement.className ? rootElement.className.toString() : ''
+      };
+    }
+  }
+
   before(() => {
-    // First load the Excel data
     cy.task('readExcel', {
       filePath: './cypress/fixtures/Style Guide.xlsx',
     }).then(data => {
       fontRules = {};
-      
-      // Get headers from first row and store original order
+
       const headers = data[0];
-      const resolutionOrder = [];
-      
-      // Find column indices and track resolution order
-      headers.forEach((header, index) => {
-        if (isResolution(header)) {
-          resolutionOrder.push({
-            resolution: header.toString().trim(),
-            index: index
-          });
-        }
-      });
-      
-      // Find other column indices
+
+      resolutionColumns = headers
+        .map((header, index) => {
+          if (isResolution(header)) {
+            return { index: index, resolution: header.toString().trim() };
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      viewports = resolutionColumns.map(col => createViewportConfig(col.resolution));
+
+      const fontFamilyIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('family'));
       const fontWeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('weight'));
       const lineHeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('height'));
-      const fontFamilyIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('family'));
       const variantIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('variant'));
-      
-      // Create viewports maintaining original order
-      viewports = resolutionOrder.map(({ resolution }) => createViewportConfig(resolution));
-      resolutionColumns = resolutionOrder;
 
-      // Process font rules starting from row 1
       data.slice(1).forEach(row => {
         const selectorRaw = row[0];
         if (!selectorRaw) return;
 
         const selector = selectorRaw.trim().toLowerCase();
-        const lineHeight = row[lineHeightIndex]?.toString().trim() || '-';
-        
-        // Create dynamic rule object with correct indices
+
         const rule = {
           fontFamily: row[fontFamilyIndex]?.trim() || '-',
           fontWeight: row[fontWeightIndex]?.toString().trim() || '-',
-          lineHeight: lineHeight,
+          lineHeight: row[lineHeightIndex]?.toString().trim() || '-',
           variant: row[variantIndex]?.toString().trim() || '-'
         };
 
-        // Add resolutions in original order
-        resolutionOrder.forEach(({ resolution, index }) => {
-          const value = row[index]?.toString().split('/')[0]?.trim() || '-';
-          rule[resolution] = value;
+        resolutionColumns.forEach(col => {
+          const value = row[col.index]?.toString().split('/')[0]?.trim() || '-';
+          rule[col.resolution] = value;
         });
 
-        if (!fontRules[selector]) {
-          fontRules[selector] = [];
-        }
+        if (!fontRules[selector]) fontRules[selector] = [];
         fontRules[selector].push(rule);
       });
 
-      console.log('Loaded fontRules:', fontRules);
-      console.log('Detected viewports in order:', viewports);
+      cy.log('Loaded fontRules and viewports');
     });
   });
 
-  // Add this at the top level of the describe block
-  Cypress.on('uncaught:exception', (err, runnable) => {
-    // Ignore Google Analytics errors
+  Cypress.on('uncaught:exception', (err) => {
+    // Ignore timeout errors or other exceptions to avoid test failure
     if (err.message && err.message.includes('Timeout (b)')) {
       return false;
     }
-    // returning false here prevents Cypress from failing the test
     return false;
   });
 
-  // Load URLs and create test suites
-  it('should test all URLs', () => {
+  it('should test all URLs with all viewports and font rules', () => {
     cy.fixture('urls.json').then(urlsData => {
       const urls = urlsData.urls;
-      cy.log('Starting tests for URLs:', urls);
 
-      // Process each URL
-      urls.forEach((urlData, urlIndex) => {
-        // cy.log(`Testing URL ${urlIndex + 1}/${urls.length}: ${urlData.name}`);
-        let resultsByViewport = {};
+      // Process URLs sequentially to avoid race conditions
+      cy.wrap(urls).each(urlData => {
+        const resultsByViewport = {};
 
-        // Test each viewport for this URL
-        viewports.forEach((view, viewIndex) => {
-          // cy.log(`Testing viewport ${viewIndex + 1}/${viewports.length}: ${view.name}`);
-          
+        // For each viewport
+        return cy.wrap(viewports).each(view => {
           cy.viewport(view.width, view.height);
-          
-          // Visit the current URL and handle analytics
+
           cy.intercept('**/analytics.google.com/**', {}).as('analytics');
           cy.intercept('**/google-analytics.com/**', {}).as('ga');
-          
+
+          // Visit URL with timeout
           cy.visit(urlData.url, {
             failOnStatusCode: false,
-            timeout: 30000
+            timeout: 60000  // Increased timeout in case of slow pages
           });
 
-          // Wait for page load and ignore analytics
-          cy.wait(2000); // Give page time to start loading
+          cy.wait(2000);
           cy.document().its('readyState').should('eq', 'complete');
-          
+
           resultsByViewport[view.name] = [];
+
           const selectors = Object.keys(fontRules);
 
-          // Process selectors with progress logging
-          cy.wrap(selectors).each((selector, selectorIndex) => {
-            // cy.log(`Processing selector ${selectorIndex + 1}/${selectors.length}: ${selector}`);
-            
-            cy.document().then(doc => {
+          // Process each selector sequentially
+          return cy.wrap(selectors).each(selector => {
+            return cy.document().then(doc => {
               const elements = doc.querySelectorAll(selector);
-              
+
+              // If no elements found, record Not Found once per selector per viewport
               if (elements.length === 0) {
                 resultsByViewport[view.name].push({
                   Selector: selector,
@@ -189,127 +237,118 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
               const rulesForSelector = fontRules[selector];
 
+              // To avoid duplicates, track texts already recorded for this selector + rule + viewport
+              const recordedTexts = new Set();
+
               rulesForSelector.forEach(expected => {
                 cy.wrap(elements).each(($el) => {
-                  cy.wrap($el).should('exist').then($element => {
-                    let computedStyle;
-                    try {
-                      if (!$element || !$element[0]) {
-                        return;
-                      }
+                  const el = $el[0];
+                  // Skip blank divs or empty text elements
+                  if (
+                    el.tagName.toLowerCase() === 'div' &&
+                    !Array.from(el.childNodes).some(
+                      (node) =>
+                        node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0
+                    )
+                  ) {
+                    return; // skip blank div
+                  }
 
-                      // Get computed style for the element
-                      computedStyle = window.getComputedStyle($element[0]);
+                  // Get computed styles and text content from element with max font size inside
+                  const styleAnalysisResult = getComputedStyleForElement(el);
 
-                      // If this is a div, check its children for the largest font size
-                      if ($element[0].tagName === 'DIV') {
-                        let maxFontSize = parseInt(computedStyle.fontSize);
-                        let elementWithMaxFont = $element[0];
+                  if (!styleAnalysisResult || !styleAnalysisResult.style) {
+                    resultsByViewport[view.name].push({
+                      Selector: selector,
+                      Status: 'Error: Style Not Found',
+                      Text: $el.text().trim().substring(0, 200),
+                      Expected_fontSize: expected[view.name] || '-',
+                      Actual_fontSize: 'Error',
+                      Expected_lineHeight: expected.lineHeight || '-',
+                      Actual_lineHeight: 'Error',
+                      Expected_fontWeight: expected.fontWeight || '-',
+                      Actual_fontWeight: 'Error',
+                      Expected_fontFamily: expected.fontFamily || '-',
+                      Actual_fontFamily: 'Error',
+                      Variant: expected.variant || '-'
+                    });
+                    return;
+                  }
 
-                        // Check immediate children only
-                        Array.from($element[0].children).forEach(child => {
-                          const childStyle = window.getComputedStyle(child);
-                          const fontSize = parseInt(childStyle.fontSize);
-                          if (fontSize > maxFontSize) {
-                            maxFontSize = fontSize;
-                            elementWithMaxFont = child;
-                          }
-                        });
+                  const computedStyle = styleAnalysisResult.style;
+                  const actualTextContent = styleAnalysisResult.textContent ? styleAnalysisResult.textContent.trim() : '';
 
-                        computedStyle = window.getComputedStyle(elementWithMaxFont);
-                      }
+                  // Skip empty text content
+                  if (!actualTextContent) return;
 
-                      const actual = {
-                        fontSize: computedStyle.fontSize || '',
-                        lineHeight: computedStyle.lineHeight || '',
-                        fontWeight: computedStyle.fontWeight || '',
-                        fontFamily: computedStyle.fontFamily || '',
-                      };
+                  // Use combination key to prevent duplicate entries for same selector, text, variant, viewport
+                  const uniqueKey = `${selector}__${actualTextContent}__${expected.variant}__${view.name}`;
+                  if (recordedTexts.has(uniqueKey)) {
+                    return; // skip duplicate content
+                  }
+                  recordedTexts.add(uniqueKey);
 
-                      const expectedFontSize = expected[view.name] || '-';
-                      const expectedLineHeight = expected.lineHeight || '-';
-                      const computedLineHeight = calculateLineHeight(expectedLineHeight, expectedFontSize);
-                      const expectedFontWeight = expected.fontWeight || '-';
-                      const expectedFontFamily = expected.fontFamily || '-';
+                  const actual = {
+                    fontSize: computedStyle.fontSize || '',
+                    lineHeight: computedStyle.lineHeight || '',
+                    fontWeight: computedStyle.fontWeight || '',
+                    fontFamily: computedStyle.fontFamily || ''
+                  };
 
-                      // Compare values
-                      const isFontSizeMatch = expectedFontSize === '-' ? true : 
-                        normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
-                      const isFontWeightMatch = expectedFontWeight === '-' ? true : 
-                        actual.fontWeight.toString() === expectedFontWeight.toString();
-                      const isLineHeightMatch = expectedLineHeight === '-' ? true : 
-                        normalizeFontSize(actual.lineHeight) === normalizeFontSize(computedLineHeight);
-                      const isFontFamilyMatch = expectedFontFamily === '-' ? true : 
-                        actual.fontFamily.toLowerCase().includes(expectedFontFamily.toLowerCase());
+                  const expectedFontSize = expected[view.name] || '-';
+                  const expectedLineHeight = expected.lineHeight || '-';
+                  const computedLineHeight = calculateLineHeight(expectedLineHeight, expectedFontSize);
+                  const expectedFontWeight = expected.fontWeight || '-';
+                  const expectedFontFamily = expected.fontFamily || '-';
 
-                      const mismatchDetails = [];
-                      if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
-                      if (!isFontSizeMatch) mismatchDetails.push('Font Size');
-                      if (!isLineHeightMatch) mismatchDetails.push('Line Height');
-                      if (!isFontWeightMatch) mismatchDetails.push('Font Weight');
+                  const isFontSizeMatch = expectedFontSize === '-' ? true :
+                    normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
+                  const isFontWeightMatch = expectedFontWeight === '-' ? true :
+                    actual.fontWeight.toString() === expectedFontWeight.toString();
+                  const isFontFamilyMatch = expectedFontFamily === '-' ? true :
+                    actual.fontFamily.toString().toLowerCase().includes(expectedFontFamily.toString().toLowerCase());
+                  const isLineHeightMatch = expectedLineHeight === '-' ? true :
+                    actual.lineHeight.toString() === computedLineHeight;
 
-                      const status = mismatchDetails.length === 0 ? 'Match' : 
-                        `Mismatch: ${mismatchDetails.join(', ')}`;
+                  const allMatch = isFontSizeMatch && isFontWeightMatch && isFontFamilyMatch && isLineHeightMatch;
 
-                      resultsByViewport[view.name].push({
-                        Selector: selector,
-                        Status: status,
-                        Text: $element.text().trim().slice(0, 50),
-                        Expected_fontSize: expectedFontSize === '-' ? 'Not Found' : expectedFontSize,
-                        Actual_fontSize: actual.fontSize,
-                        Expected_lineHeight: expectedLineHeight === '-' ? 'Not Found' : computedLineHeight,
-                        Actual_lineHeight: actual.lineHeight,
-                        Expected_fontWeight: expectedFontWeight === '-' ? 'Not Found' : expectedFontWeight,
-                        Actual_fontWeight: actual.fontWeight,
-                        Expected_fontFamily: expectedFontFamily === '-' ? 'Not Found' : expectedFontFamily,
-                        Actual_fontFamily: actual.fontFamily,
-                        Variant: expected.variant || '-'
-                      });
-                    } catch (e) {
-                      cy.log(`Error processing element: ${e.message}`);
-                    }
+                  // Highlight element with red background and border if mismatch
+                  if (!allMatch) {
+                    el.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    el.style.border = '2px solid red';
+                  } else {
+                    // Remove highlight if matches (helps in re-runs)
+                    el.style.backgroundColor = '';
+                    el.style.border = '';
+                  }
+
+                  resultsByViewport[view.name].push({
+                    Selector: selector,
+                    Status: allMatch ? 'Match' : 'Mismatch',
+                    Text: actualTextContent.substring(0, 200),
+                    Expected_fontSize: expectedFontSize,
+                    Actual_fontSize: actual.fontSize,
+                    Expected_lineHeight: computedLineHeight,
+                    Actual_lineHeight: actual.lineHeight,
+                    Expected_fontWeight: expectedFontWeight,
+                    Actual_fontWeight: actual.fontWeight,
+                    Expected_fontFamily: expectedFontFamily,
+                    Actual_fontFamily: actual.fontFamily,
+                    Variant: expected.variant || '-'
                   });
                 });
               });
             });
-          }).then(() => {
-            // Log completion after all selectors are processed for this viewport
-            cy.log(`Completed viewport ${view.name} for ${urlData.name}`);
+          });
+        })
+        .then(() => {
+          // After all viewports processed for this URL, write Excel
+          return cy.task('writeExcelSheets', {
+            filename: `./cypress/results/${urlData.name}-font-styles.xlsx`,
+            data: resultsByViewport,
+            sheetOrder: Object.keys(resultsByViewport)
           });
         });
-
-        // Write results for this URL with clear logging
-        cy.then(() => {
-          const hasData = Object.values(resultsByViewport).some(data => 
-            Array.isArray(data) && data.length > 0
-          );
-
-          if (hasData) {
-            const safeFileName = urlData.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-            const outputPath = `./cypress/results/${safeFileName}-font-check.xlsx`;
-            
-            cy.log(`Writing results for ${urlData.name} to ${outputPath}`);
-            
-            cy.task('writeExcelSheets', {
-              data: resultsByViewport,
-              filename: outputPath,
-              sheetOrder: viewports.map(v => v.name) // Pass the correct sheet order
-            }).then((result) => {
-              if (result === null) {
-                cy.log(`✅ Successfully wrote results for ${urlData.name}`);
-              }
-            }, (error) => {
-              cy.log(`❌ Error writing results for ${urlData.name}: ${error.message}`);
-            });
-          } else {
-            cy.log(`⚠️ No data to write for ${urlData.name}`);
-          }
-        });
-      });
-
-      // After all URLs are processed
-      cy.then(() => {
-        cy.log('✅ Test completed for all URLs');
       });
     });
   });
