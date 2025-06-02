@@ -140,7 +140,14 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
           }
           return null;
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort((a, b) => {
+          // Extract numbers from resolution strings
+          const aNum = parseInt(a.resolution.replace(/px/gi, ''));
+          const bNum = parseInt(b.resolution.replace(/px/gi, ''));
+          // Sort in descending order (largest first)
+          return bNum - aNum;
+        });
 
       viewports = resolutionColumns.map(col => createViewportConfig(col.resolution));
 
@@ -195,13 +202,35 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
         return cy.wrap(viewports).each(view => {
           cy.viewport(view.width, view.height);
 
+          // Block various analytics and third-party requests
           cy.intercept('**/analytics.google.com/**', {}).as('analytics');
           cy.intercept('**/google-analytics.com/**', {}).as('ga');
+          cy.intercept('**/doubleclick.net/**', {}).as('doubleclick');
+          cy.intercept('**/youtube.com/**', {}).as('youtube');
+          cy.intercept('**/ytimg.com/**', {}).as('ytimg');
+          cy.intercept('**/linkedin.com/**', {}).as('linkedin');
+          cy.intercept('**/facebook.com/**', {}).as('facebook');
+          cy.intercept('**/fbcdn.net/**', {}).as('fbcdn');
+          cy.intercept('**/google-analytics.com/collect**', {}).as('ga-collect');
+          cy.intercept('**/google-analytics.com/g/collect**', {}).as('ga4');
+          cy.intercept('**/googletagmanager.com/**', {}).as('gtm');
+          cy.intercept('**/hotjar.com/**', {}).as('hotjar');
+          cy.intercept('**/clarity.ms/**', {}).as('clarity');
 
           // Visit URL with timeout
           cy.visit(urlData.url, {
             failOnStatusCode: false,
-            timeout: 60000  // Increased timeout in case of slow pages
+            timeout: 60000,  // Increased timeout in case of slow pages
+            // Add onBeforeLoad to block more scripts
+            onBeforeLoad: (win) => {
+              // Block Google Analytics
+              win.ga = () => {};
+              win.gtag = () => {};
+              // Block other tracking scripts
+              win.fbq = () => {};
+              win.clarity = () => {};
+              win.hj = () => {};
+            }
           });
 
           cy.wait(2000);
@@ -326,7 +355,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                   resultsByViewport[view.name].push({
                     Selector: selector,
                     Status: status,
-                    Text: actualTextContent.substring(0, 200),
+                    Text: actualTextContent.substring(0, 50),
                     Expected_fontSize: expectedFontSize,
                     Actual_fontSize: actual.fontSize,
                     Expected_lineHeight: computedLineHeight,
@@ -350,10 +379,17 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
         })
         .then(() => {
           // After all viewports processed for this URL, write Excel
+          // Sort viewports to ensure 1920px comes first
+          const sortedViewportNames = Object.keys(resultsByViewport).sort((a, b) => {
+            const aNum = parseInt(a.replace(/px/gi, ''));
+            const bNum = parseInt(b.replace(/px/gi, ''));
+            return bNum - aNum;  // Sort in descending order
+          });
+
           return cy.task('writeExcelSheets', {
             filename: `./cypress/results/${urlData.name}-font-styles.xlsx`,
             data: resultsByViewport,
-            sheetOrder: Object.keys(resultsByViewport)
+            sheetOrder: sortedViewportNames
           });
         });
       });
