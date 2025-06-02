@@ -64,7 +64,7 @@ module.exports = defineConfig({
             return null;
           }
         },
-        writeExcelSheets({ data, filename }) {
+        writeExcelSheets({ data, filename, sheetOrder }) {
           return new Promise((resolve, reject) => {
             try {
               const outputPath = path.resolve(filename);
@@ -79,7 +79,9 @@ module.exports = defineConfig({
                 Sheets: {}
               };
 
-              Object.entries(data).forEach(([sheetName, sheetData]) => {
+              // Process sheets in the specified order
+              (sheetOrder || Object.keys(data)).forEach(sheetName => {
+                const sheetData = data[sheetName];
                 if (!sheetData || !Array.isArray(sheetData) || sheetData.length === 0) {
                   console.log(`⚠️ No data for sheet "${sheetName}", skipping sheet creation.`);
                   return;
@@ -191,7 +193,7 @@ module.exports = defineConfig({
               });
 
               XLSX.writeFile(workbook, outputPath);
-              console.log(`✅ Excel file with multiple sheets written to: ${outputPath}`);
+              console.log(`✅ Excel file with ordered sheets written to: ${outputPath}`);
               resolve(null);
             } catch (err) {
               console.error('❌ Error writing Excel sheets:', err);

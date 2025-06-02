@@ -4,49 +4,56 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
   Cypress.config('pageLoadTimeout', 300000);
 
   let fontRules = {};
-  const viewports = [
-    { name: '4k Screen', width: 2560, height: 1440 },
-    { name: 'Normal Screen', width: 1920, height: 1080 },
-    { name: 'Desktop', width: 1440, height: 900 },
-    { name: 'Laptop', width: 1366, height: 800 },
-    { name: 'Small Laptop', width: 1200, height: 800 },
-    { name: 'Tablet', width: 1024, height: 768 },
-    { name: 'Small Tablet', width: 990, height: 800 },
-    { name: 'Mobile', width: 766, height: 800 },
-    { name: 'Small Mobile', width: 430, height: 800 },
-  ];
+  let resolutionColumns = [];
+  let viewports = [];
 
-  // Map viewport names to Excel columns for expected font size
-  const viewportToColumnMap = {
-    '4k Screen': 'Desktop',      
-    'Normal Screen': 'Desktop',
-    'Desktop': 'Desktop',
-    'Laptop': 'Laptop',
-    'Small Laptop': 'Laptop',
-    'Tablet': 'Tablet',
-    'Small Tablet': 'Tablet',
-    'Mobile': 'Mobile',
-    'Small Mobile': 'SmallMobile',
-  };
+  // Function to detect if a value represents a resolution
+  function isResolution(value) {
+    // Remove 'px' and try to parse as number
+    const num = parseInt(value?.toString().replace(/px/gi, ''));
+    return !isNaN(num) && num > 0;
+  }
 
   function normalizeFontSize(value) {
-    return value?.replace('px', '').trim();
+    if (!value) return '';
+    return value.toString().replace(/px/gi, '').trim();
   }
 
   function calculateLineHeight(lineHeightValue, fontSize) {
+    if (!lineHeightValue || lineHeightValue === '-') return '-';
+    
     // If line height contains 'px', return it directly
-    if (lineHeightValue?.includes('px')) {
-      return normalizeFontSize(lineHeightValue);
+    if (lineHeightValue.toString().includes('px')) {
+      return lineHeightValue.toString().replace(/px/gi, '').trim() + 'px';
     }
+    
     // If it's a multiplier (like 1.3), multiply with font size
     const multiplier = parseFloat(lineHeightValue);
     if (!isNaN(multiplier) && fontSize) {
-      const baseFontSize = parseFloat(normalizeFontSize(fontSize));
+      const baseFontSize = parseFloat(fontSize.toString().replace(/px/gi, '').trim());
       if (!isNaN(baseFontSize)) {
-        return Math.round(multiplier * baseFontSize).toString();
+        return Math.round(multiplier * baseFontSize).toString() + 'px';
       }
     }
-    return lineHeightValue;
+    return lineHeightValue.toString();
+  }
+
+  function compareFontSizes(expected, actual) {
+    const normalizedExpected = normalizeFontSize(expected);
+    const normalizedActual = normalizeFontSize(actual);
+    return normalizedExpected === normalizedActual;
+  }
+
+  // Function to create viewport config from resolution
+  function createViewportConfig(resolution) {
+    const width = parseInt(resolution.replace(/px/gi, ''));
+    // Default height calculation, adjust if needed
+    const height = Math.min(Math.round(width * 0.75), 1440);
+    return {
+      name: resolution,  // Keep the original resolution string (e.g., "1920px")
+      width: width,
+      height: height
+    };
   }
 
   before(() => {
@@ -56,26 +63,51 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
     }).then(data => {
       fontRules = {};
       
+      // Get headers from first row and store original order
+      const headers = data[0];
+      const resolutionOrder = [];
+      
+      // Find column indices and track resolution order
+      headers.forEach((header, index) => {
+        if (isResolution(header)) {
+          resolutionOrder.push({
+            resolution: header.toString().trim(),
+            index: index
+          });
+        }
+      });
+      
+      // Find other column indices
+      const fontWeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('weight'));
+      const lineHeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('height'));
+      const fontFamilyIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('family'));
+      const variantIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('variant'));
+      
+      // Create viewports maintaining original order
+      viewports = resolutionOrder.map(({ resolution }) => createViewportConfig(resolution));
+      resolutionColumns = resolutionOrder;
+
       // Process font rules starting from row 1
       data.slice(1).forEach(row => {
         const selectorRaw = row[0];
         if (!selectorRaw) return;
 
         const selector = selectorRaw.trim().toLowerCase();
-
+        const lineHeight = row[lineHeightIndex]?.toString().trim() || '-';
+        
+        // Create dynamic rule object with correct indices
         const rule = {
-          fontFamily: row[1]?.trim(),
-          Desktop: row[2]?.split('/')[0]?.trim(), //1920
-          Laptop: row[3]?.trim(), //1700
-          SmallLaptop: row[4]?.trim(),//1200
-          Tablet: row[5]?.trim(),//991
-          SmallTablet: row[6]?.trim(),//767
-          Mobile: row[7]?.trim(), //575
-          SmallMobile: row[7]?.trim(),
-          fontWeight: row[8]?.toString().trim(),
-          lineHeight: row[9]?.toString().trim(),
-          variant: row[10],
+          fontFamily: row[fontFamilyIndex]?.trim() || '-',
+          fontWeight: row[fontWeightIndex]?.toString().trim() || '-',
+          lineHeight: lineHeight,
+          variant: row[variantIndex]?.toString().trim() || '-'
         };
+
+        // Add resolutions in original order
+        resolutionOrder.forEach(({ resolution, index }) => {
+          const value = row[index]?.toString().split('/')[0]?.trim() || '-';
+          rule[resolution] = value;
+        });
 
         if (!fontRules[selector]) {
           fontRules[selector] = [];
@@ -84,6 +116,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
       });
 
       console.log('Loaded fontRules:', fontRules);
+      console.log('Detected viewports in order:', viewports);
     });
   });
 
@@ -105,12 +138,12 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
       // Process each URL
       urls.forEach((urlData, urlIndex) => {
-        cy.log(`Testing URL ${urlIndex + 1}/${urls.length}: ${urlData.name}`);
+        // cy.log(`Testing URL ${urlIndex + 1}/${urls.length}: ${urlData.name}`);
         let resultsByViewport = {};
 
         // Test each viewport for this URL
         viewports.forEach((view, viewIndex) => {
-          cy.log(`Testing viewport ${viewIndex + 1}/${viewports.length}: ${view.name}`);
+          // cy.log(`Testing viewport ${viewIndex + 1}/${viewports.length}: ${view.name}`);
           
           cy.viewport(view.width, view.height);
           
@@ -132,7 +165,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
           // Process selectors with progress logging
           cy.wrap(selectors).each((selector, selectorIndex) => {
-            cy.log(`Processing selector ${selectorIndex + 1}/${selectors.length}: ${selector}`);
+            // cy.log(`Processing selector ${selectorIndex + 1}/${selectors.length}: ${selector}`);
             
             cy.document().then(doc => {
               const elements = doc.querySelectorAll(selector);
@@ -151,7 +184,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                   Actual_fontFamily: '',
                   Variant: ''
                 });
-                cy.log(`Selector "${selector}" not found on viewport ${view.name}.`);
+                // cy.log(`Selector "${selector}" not found on viewport ${view.name}.`);
                 return;
               }
 
@@ -164,12 +197,12 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                     let computedStyle;
                     try {
                       if (!$element || !$element[0]) {
-                        cy.log(`Element not found for selector "${selector}"`);
+                        // cy.log(`Element not found for selector "${selector}"`);
                         return;
                       }
                       computedStyle = window.getComputedStyle($element[0]);
                       if (!computedStyle) {
-                        cy.log(`Could not get computed style for selector "${selector}"`);
+                        // cy.log(`Could not get computed style for selector "${selector}"`);
                         return;
                       }
                     } catch (e) {
@@ -184,9 +217,10 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                       fontFamily: computedStyle.fontFamily || '',
                     };
 
-                    const columnName = viewportToColumnMap[view.name];
+                    const columnName = viewports.find(v => v.name === view.name)?.name || '-';
                     const expectedFontSize = expected[columnName] || '-';
-                    const expectedLineHeight = expected.lineHeight ? calculateLineHeight(expected.lineHeight, expectedFontSize) : '-';
+                    const expectedLineHeight = expected.lineHeight || '-';
+                    const computedLineHeight = calculateLineHeight(expectedLineHeight, expectedFontSize);
                     const actualLineHeight = normalizeFontSize(actual.lineHeight);
                     const expectedFontWeight = expected.fontWeight || '-';
                     const expectedFontFamily = expected.fontFamily || '-';
@@ -194,9 +228,10 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                     // Only compare if expected values exist (not '-')
                     const isFontFamilyMatch = expectedFontFamily === '-' ? true : 
                       actual.fontFamily.toLowerCase().includes(expectedFontFamily.toLowerCase());
-                    const isFontSizeMatch = expectedFontSize === '-' ? true : normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
+                    const isFontSizeMatch = expectedFontSize === '-' ? true : compareFontSizes(expectedFontSize, actual.fontSize);
                     const isFontWeightMatch = expectedFontWeight === '-' ? true : actual.fontWeight.toString() === expectedFontWeight.toString();
-                    const isLineHeightMatch = expectedLineHeight === '-' ? true : actualLineHeight === expectedLineHeight;
+                    const isLineHeightMatch = expectedLineHeight === '-' ? true : 
+                      normalizeFontSize(actual.lineHeight) === normalizeFontSize(computedLineHeight);
 
                     let mismatchDetails = [];
                     if (!isFontFamilyMatch) mismatchDetails.push('Font Family');
@@ -208,17 +243,17 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                     
                     resultsByViewport[view.name].push({
                       Selector: selector,
-                      Variant: expected.variant || '-',
-                      Text: $element.text().trim().slice(0, 50),
                       Status: status,
+                      Text: $element.text().trim().slice(0, 50),
                       Expected_fontSize: expectedFontSize === '-' ? 'Not Found' : expectedFontSize,
                       Actual_fontSize: actual.fontSize,
-                      Expected_lineHeight: expected.lineHeight ? `${expected.lineHeight} (Computed: ${expectedLineHeight}px)` : 'Not Found',
+                      Expected_lineHeight: expectedLineHeight === '-' ? 'Not Found' : computedLineHeight,
                       Actual_lineHeight: actual.lineHeight,
                       Expected_fontWeight: expectedFontWeight === '-' ? 'Not Found' : expectedFontWeight,
                       Actual_fontWeight: actual.fontWeight,
                       Expected_fontFamily: expectedFontFamily === '-' ? 'Not Found' : expectedFontFamily,
-                      Actual_fontFamily: actual.fontFamily
+                      Actual_fontFamily: actual.fontFamily,
+                      Variant: expected.variant || '-'
                     });
                   });
                 });
@@ -245,6 +280,7 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
             cy.task('writeExcelSheets', {
               data: resultsByViewport,
               filename: outputPath,
+              sheetOrder: viewports.map(v => v.name) // Pass the correct sheet order
             }).then((result) => {
               if (result === null) {
                 cy.log(`✅ Successfully wrote results for ${urlData.name}`);
