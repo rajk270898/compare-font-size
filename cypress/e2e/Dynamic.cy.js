@@ -237,57 +237,49 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
               const rulesForSelector = fontRules[selector];
 
-              // To avoid duplicates, track texts already recorded for this selector + rule + viewport
-              const recordedTexts = new Set();
+              // Process each element
+              cy.wrap(elements).each(($el) => {
+                const el = $el[0];
+                // Skip blank divs or empty text elements
+                if (
+                  el.tagName.toLowerCase() === 'div' &&
+                  !Array.from(el.childNodes).some(
+                    (node) =>
+                      node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0
+                  )
+                ) {
+                  return; // skip blank div
+                }
 
-              rulesForSelector.forEach(expected => {
-                cy.wrap(elements).each(($el) => {
-                  const el = $el[0];
-                  // Skip blank divs or empty text elements
-                  if (
-                    el.tagName.toLowerCase() === 'div' &&
-                    !Array.from(el.childNodes).some(
-                      (node) =>
-                        node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0
-                    )
-                  ) {
-                    return; // skip blank div
-                  }
+                // Get computed styles and text content from element with max font size inside
+                const styleAnalysisResult = getComputedStyleForElement(el);
 
-                  // Get computed styles and text content from element with max font size inside
-                  const styleAnalysisResult = getComputedStyleForElement(el);
+                if (!styleAnalysisResult || !styleAnalysisResult.style) {
+                  resultsByViewport[view.name].push({
+                    Selector: selector,
+                    Status: 'Error: Style Not Found',
+                    Text: $el.text().trim().substring(0, 200),
+                    Expected_fontSize: '-',
+                    Actual_fontSize: 'Error',
+                    Expected_lineHeight: '-',
+                    Actual_lineHeight: 'Error',
+                    Expected_fontWeight: '-',
+                    Actual_fontWeight: 'Error',
+                    Expected_fontFamily: '-',
+                    Actual_fontFamily: 'Error',
+                    Variant: '-'
+                  });
+                  return;
+                }
 
-                  if (!styleAnalysisResult || !styleAnalysisResult.style) {
-                    resultsByViewport[view.name].push({
-                      Selector: selector,
-                      Status: 'Error: Style Not Found',
-                      Text: $el.text().trim().substring(0, 200),
-                      Expected_fontSize: expected[view.name] || '-',
-                      Actual_fontSize: 'Error',
-                      Expected_lineHeight: expected.lineHeight || '-',
-                      Actual_lineHeight: 'Error',
-                      Expected_fontWeight: expected.fontWeight || '-',
-                      Actual_fontWeight: 'Error',
-                      Expected_fontFamily: expected.fontFamily || '-',
-                      Actual_fontFamily: 'Error',
-                      Variant: expected.variant || '-'
-                    });
-                    return;
-                  }
+                const computedStyle = styleAnalysisResult.style;
+                const actualTextContent = styleAnalysisResult.textContent ? styleAnalysisResult.textContent.trim() : '';
 
-                  const computedStyle = styleAnalysisResult.style;
-                  const actualTextContent = styleAnalysisResult.textContent ? styleAnalysisResult.textContent.trim() : '';
+                // Skip empty text content
+                if (!actualTextContent) return;
 
-                  // Skip empty text content
-                  if (!actualTextContent) return;
-
-                  // Use combination key to prevent duplicate entries for same selector, text, variant, viewport
-                  const uniqueKey = `${selector}__${actualTextContent}__${expected.variant}__${view.name}`;
-                  if (recordedTexts.has(uniqueKey)) {
-                    return; // skip duplicate content
-                  }
-                  recordedTexts.add(uniqueKey);
-
+                // Compare against each rule variant
+                rulesForSelector.forEach(expected => {
                   const actual = {
                     fontSize: computedStyle.fontSize || '',
                     lineHeight: computedStyle.lineHeight || '',
@@ -301,30 +293,39 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                   const expectedFontWeight = expected.fontWeight || '-';
                   const expectedFontFamily = expected.fontFamily || '-';
 
-                  const isFontSizeMatch = expectedFontSize === '-' ? true :
-                    normalizeFontSize(actual.fontSize) === normalizeFontSize(expectedFontSize);
-                  const isFontWeightMatch = expectedFontWeight === '-' ? true :
-                    actual.fontWeight.toString() === expectedFontWeight.toString();
-                  const isFontFamilyMatch = expectedFontFamily === '-' ? true :
-                    actual.fontFamily.toString().toLowerCase().includes(expectedFontFamily.toString().toLowerCase());
-                  const isLineHeightMatch = expectedLineHeight === '-' ? true :
-                    actual.lineHeight.toString() === computedLineHeight;
-
-                  const allMatch = isFontSizeMatch && isFontWeightMatch && isFontFamilyMatch && isLineHeightMatch;
-
-                  // Highlight element with red background and border if mismatch
-                  if (!allMatch) {
-                    el.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-                    el.style.border = '2px solid red';
-                  } else {
-                    // Remove highlight if matches (helps in re-runs)
-                    el.style.backgroundColor = '';
-                    el.style.border = '';
+                  // Check each property individually
+                  const mismatches = [];
+                  
+                  if (expectedFontSize !== '-' && 
+                      normalizeFontSize(actual.fontSize) !== normalizeFontSize(expectedFontSize)) {
+                    mismatches.push('Font-size');
+                  }
+                  
+                  if (expectedLineHeight !== '-' && 
+                      actual.lineHeight.toString() !== computedLineHeight) {
+                    mismatches.push('Line-height');
+                  }
+                  
+                  if (expectedFontWeight !== '-' && 
+                      actual.fontWeight.toString() !== expectedFontWeight.toString()) {
+                    mismatches.push('Font-weight');
+                  }
+                  
+                  if (expectedFontFamily !== '-' && 
+                      !actual.fontFamily.toString().toLowerCase().includes(expectedFontFamily.toString().toLowerCase())) {
+                    mismatches.push('Font-family');
                   }
 
+                  // Determine status message
+                  let status = 'Match';
+                  if (mismatches.length > 0) {
+                    status = `Mismatch: ${mismatches.join(', ')}`;
+                  }
+
+                  // Add result for this variant comparison
                   resultsByViewport[view.name].push({
                     Selector: selector,
-                    Status: allMatch ? 'Match' : 'Mismatch',
+                    Status: status,
                     Text: actualTextContent.substring(0, 200),
                     Expected_fontSize: expectedFontSize,
                     Actual_fontSize: actual.fontSize,
@@ -336,6 +337,12 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
                     Actual_fontFamily: actual.fontFamily,
                     Variant: expected.variant || '-'
                   });
+
+                  // Visual highlight for mismatches (red background)
+                  if (mismatches.length > 0) {
+                    el.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    el.style.border = '2px solid red';
+                  }
                 });
               });
             });
