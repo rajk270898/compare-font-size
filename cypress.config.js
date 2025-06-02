@@ -9,6 +9,20 @@ module.exports = defineConfig({
     pageLoadTimeout: 30000,
     setupNodeEvents(on, config) {
       on('task', {
+        ensureDir(dirPath) {
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          return null;
+        },
+        deleteFolder(folderPath) {
+          if (fs.existsSync(folderPath)) {
+            fs.rmSync(folderPath, { recursive: true, force: true });
+            // Recreate the empty folder
+            fs.mkdirSync(folderPath, { recursive: true });
+          }
+          return null;
+        },
         readExcel({ filePath }) {
           try {
             console.log('Reading Excel file from:', filePath);

@@ -126,59 +126,62 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
   }
 
   before(() => {
-    cy.task('readExcel', {
-      filePath: './cypress/fixtures/Style Guide.xlsx',
-    }).then(data => {
-      fontRules = {};
+    // Create screenshots directory if it doesn't exist
+    cy.task('ensureDir', 'cypress/screenshots/mismatches').then(() => {
+      cy.task('readExcel', {
+        filePath: './cypress/fixtures/Style Guide.xlsx',
+      }).then(data => {
+        fontRules = {};
 
-      const headers = data[0];
+        const headers = data[0];
 
-      resolutionColumns = headers
-        .map((header, index) => {
-          if (isResolution(header)) {
-            return { index: index, resolution: header.toString().trim() };
-          }
-          return null;
-        })
-        .filter(Boolean)
-        .sort((a, b) => {
-          // Extract numbers from resolution strings
-          const aNum = parseInt(a.resolution.replace(/px/gi, ''));
-          const bNum = parseInt(b.resolution.replace(/px/gi, ''));
-          // Sort in descending order (largest first)
-          return bNum - aNum;
+        resolutionColumns = headers
+          .map((header, index) => {
+            if (isResolution(header)) {
+              return { index: index, resolution: header.toString().trim() };
+            }
+            return null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => {
+            // Extract numbers from resolution strings
+            const aNum = parseInt(a.resolution.replace(/px/gi, ''));
+            const bNum = parseInt(b.resolution.replace(/px/gi, ''));
+            // Sort in descending order (largest first)
+            return bNum - aNum;
+          });
+
+        viewports = resolutionColumns.map(col => createViewportConfig(col.resolution));
+
+        const fontFamilyIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('family'));
+        const fontWeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('weight'));
+        const lineHeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('height'));
+        const variantIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('variant'));
+
+        data.slice(1).forEach(row => {
+          const selectorRaw = row[0];
+          if (!selectorRaw) return;
+
+          const selector = selectorRaw.trim().toLowerCase();
+
+          const rule = {
+            fontFamily: row[fontFamilyIndex]?.trim() || '-',
+            fontWeight: row[fontWeightIndex]?.toString().trim() || '-',
+            lineHeight: row[lineHeightIndex]?.toString().trim() || '-',
+            variant: row[variantIndex]?.toString().trim() || '-'
+          };
+
+          resolutionColumns.forEach(col => {
+            const value = row[col.index]?.toString().split('/')[0]?.trim() || '-';
+            rule[col.resolution] = value;
+          });
+
+          if (!fontRules[selector]) fontRules[selector] = [];
+          fontRules[selector].push(rule);
         });
 
-      viewports = resolutionColumns.map(col => createViewportConfig(col.resolution));
-
-      const fontFamilyIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('family'));
-      const fontWeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('weight'));
-      const lineHeightIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('height'));
-      const variantIndex = headers.findIndex(h => h?.toString().toLowerCase().includes('variant'));
-
-      data.slice(1).forEach(row => {
-        const selectorRaw = row[0];
-        if (!selectorRaw) return;
-
-        const selector = selectorRaw.trim().toLowerCase();
-
-        const rule = {
-          fontFamily: row[fontFamilyIndex]?.trim() || '-',
-          fontWeight: row[fontWeightIndex]?.toString().trim() || '-',
-          lineHeight: row[lineHeightIndex]?.toString().trim() || '-',
-          variant: row[variantIndex]?.toString().trim() || '-'
-        };
-
-        resolutionColumns.forEach(col => {
-          const value = row[col.index]?.toString().split('/')[0]?.trim() || '-';
-          rule[col.resolution] = value;
-        });
-
-        if (!fontRules[selector]) fontRules[selector] = [];
-        fontRules[selector].push(rule);
+        cy.log('Loaded fontRules and viewports');
       });
-
-      cy.log('Loaded fontRules and viewports');
     });
   });
 
@@ -347,30 +350,128 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
 
                   // Determine status message
                   let status = 'Match';
+                  let screenshotPath = '';
+                  
                   if (mismatches.length > 0) {
                     status = `Mismatch: ${mismatches.join(', ')}`;
-                  }
-
-                  // Add result for this variant comparison
-                  resultsByViewport[view.name].push({
-                    Selector: selector,
-                    Status: status,
-                    Text: actualTextContent.substring(0, 50),
-                    Expected_fontSize: expectedFontSize,
-                    Actual_fontSize: actual.fontSize,
-                    Expected_lineHeight: computedLineHeight,
-                    Actual_lineHeight: actual.lineHeight,
-                    Expected_fontWeight: expectedFontWeight,
-                    Actual_fontWeight: actual.fontWeight,
-                    Expected_fontFamily: expectedFontFamily,
-                    Actual_fontFamily: actual.fontFamily,
-                    Variant: expected.variant || '-'
-                  });
-
-                  // Visual highlight for mismatches (red background)
-                  if (mismatches.length > 0) {
-                    el.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    
+                    // Add visual indicators for mismatches
+                    el.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
                     el.style.border = '2px solid red';
+                    
+                    // Ensure element is in view with padding
+                    el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                    cy.wait(500); // Wait for scrolling to complete
+
+                    // Create text overlay using Cypress command
+                    cy.window().then((win) => {
+                      // Create detailed mismatch text
+                      const mismatchDetails = mismatches.map(type => {
+                        let details = '';
+                        switch(type) {
+                          case 'Font-size':
+                            details = `Expected: ${expectedFontSize} | Found: ${actual.fontSize}`;
+                            break;
+                          case 'Line-height':
+                            details = `Expected: ${computedLineHeight} | Found: ${actual.lineHeight}`;
+                            break;
+                          case 'Font-weight':
+                            details = `Expected: ${expectedFontWeight} | Found: ${actual.fontWeight}`;
+                            break;
+                          case 'Font-family':
+                            details = `Expected: ${expectedFontFamily} | Found: ${actual.fontFamily}`;
+                            break;
+                        }
+                        return `${type}: ${details}`;
+                      }).join('\\n');
+
+                      const overlayText = `Selector: ${selector}\\nVariant: ${expected.variant || 'default'}\\n${mismatchDetails}`;
+                      
+                      // Create overlay element
+                      const overlay = win.document.createElement('div');
+                      overlay.id = 'mismatch-overlay';
+                      overlay.style.position = 'fixed';
+                      overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+                      overlay.style.color = '#FF4444';
+                      overlay.style.padding = '10px 15px';
+                      overlay.style.fontSize = '16px';
+                      overlay.style.fontWeight = 'bold';
+                      overlay.style.borderRadius = '5px';
+                      overlay.style.zIndex = '999999';
+                      overlay.style.maxWidth = '600px';
+                      overlay.style.whiteSpace = 'pre-wrap';
+                      overlay.textContent = overlayText;
+
+                      // Get element position
+                      const rect = el.getBoundingClientRect();
+                      overlay.style.top = (rect.top + win.scrollY - 100) + 'px';
+                      overlay.style.left = rect.left + 'px';
+
+                      // Add overlay to page
+                      win.document.body.appendChild(overlay);
+
+                      // Generate screenshot name and path
+                      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                      const screenshotName = `${selector}_${expected.variant || 'default'}_${timestamp}`;
+                      const urlFolderName = urlData.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+                      const screenshotRelativePath = `mismatches/${urlFolderName}/${view.name}`;
+                      const finalScreenshotPath = `cypress/screenshots/${screenshotRelativePath}/${screenshotName}.png`;
+
+                      // Ensure URL-specific directory exists
+                      cy.task('ensureDir', `cypress/screenshots/${screenshotRelativePath}`).then(() => {
+                        // Delete existing screenshots in this directory
+                        cy.task('deleteFolder', `cypress/screenshots/${screenshotRelativePath}`).then(() => {
+                          cy.screenshot(`${screenshotRelativePath}/${screenshotName}`, {
+                            capture: 'viewport',
+                            clip: {
+                              x: Math.max(0, rect.left - 700),
+                              y: Math.max(0, rect.top - 700),
+                              width: rect.width + 1400,
+                              height: rect.height + 1400
+                            },
+                            scale: false,
+                            overwrite: true
+                          }).then(() => {
+                            // Remove overlay after screenshot
+                            win.document.body.removeChild(overlay);
+                          });
+                        });
+                      });
+
+                      // Add result with screenshot path
+                      resultsByViewport[view.name].push({
+                        Selector: selector,
+                        Status: status,
+                        Text: actualTextContent.substring(0, 200),
+                        Expected_fontSize: expectedFontSize,
+                        Actual_fontSize: actual.fontSize,
+                        Expected_lineHeight: computedLineHeight,
+                        Actual_lineHeight: actual.lineHeight,
+                        Expected_fontWeight: expectedFontWeight,
+                        Actual_fontWeight: actual.fontWeight,
+                        Expected_fontFamily: expectedFontFamily,
+                        Actual_fontFamily: actual.fontFamily,
+                        Variant: expected.variant || '-',
+                        Screenshot: finalScreenshotPath
+                      });
+                    });
+                  } else {
+                    // Add result without screenshot for matches
+                    resultsByViewport[view.name].push({
+                      Selector: selector,
+                      Status: status,
+                      Text: actualTextContent.substring(0, 200),
+                      Expected_fontSize: expectedFontSize,
+                      Actual_fontSize: actual.fontSize,
+                      Expected_lineHeight: computedLineHeight,
+                      Actual_lineHeight: actual.lineHeight,
+                      Expected_fontWeight: expectedFontWeight,
+                      Actual_fontWeight: actual.fontWeight,
+                      Expected_fontFamily: expectedFontFamily,
+                      Actual_fontFamily: actual.fontFamily,
+                      Variant: expected.variant || '-',
+                      Screenshot: ''
+                    });
                   }
                 });
               });
@@ -396,3 +497,9 @@ describe('Responsive Font Style Checker with Variants and Sheets', () => {
     });
   });
 });
+
+
+
+
+
+
