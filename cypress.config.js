@@ -1,12 +1,17 @@
 const XLSX = require('xlsx-style');
+const Excel = require('exceljs');
+const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { defineConfig } = require('cypress');
 
 module.exports = defineConfig({
   e2e: {
+    
     setupNodeEvents(on, config) {
       on('task', {
+        // ✅ Read style guide data
+        
         readExcel({ filePath }) {
           try {
             const absolutePath = path.resolve(filePath);
@@ -24,6 +29,7 @@ module.exports = defineConfig({
               raw: true,
               defval: ''
             });
+            
 
             return jsonData;
           } catch (err) {
@@ -32,6 +38,7 @@ module.exports = defineConfig({
           }
         },
 
+        // ✅ Write styled result sheets
         writeExcelSheets({ data, filename, sheetOrder }) {
           return new Promise((resolve, reject) => {
             try {
@@ -63,7 +70,7 @@ module.exports = defineConfig({
 
                 const columnArray = Array.from(columns);
 
-                // Write header row
+                // Write header
                 columnArray.forEach((col, idx) => {
                   const cellRef = XLSX.utils.encode_cell({ r: 0, c: idx });
                   worksheet[cellRef] = {
@@ -85,16 +92,11 @@ module.exports = defineConfig({
                       s: {}
                     };
 
-                    // Highlight mismatched values
+                    // Highlight mismatches
                     if (col === 'Status' && value && value.includes('Mismatch')) {
                       worksheet[cellRef].s = {
-                        fill: {
-                          patternType: 'solid',
-                          fgColor: { rgb: 'FF0000' }
-                        },
-                        font: {
-                          color: { rgb: '000000' }
-                        }
+                        fill: { patternType: 'solid', fgColor: { rgb: 'FF0000' } },
+                        font: { color: { rgb: '000000' } }
                       };
 
                       const mismatchTypes = {
@@ -110,20 +112,14 @@ module.exports = defineConfig({
                           const expectedCol = cols[0];
                           const expectedVal = row[expectedCol];
 
-                          // Skip Font Weight mismatch if Expected value is missing or '-'
                           if (!isFontWeight || (expectedVal && expectedVal !== '-')) {
                             cols.forEach(colName => {
                               const colIndex = columnArray.indexOf(colName);
                               if (colIndex !== -1) {
                                 const mismatchCell = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIndex });
                                 worksheet[mismatchCell].s = {
-                                  fill: {
-                                    patternType: 'solid',
-                                    fgColor: { rgb: 'FF0000' }
-                                  },
-                                  font: {
-                                    color: { rgb: '000000' }
-                                  }
+                                  fill: { patternType: 'solid', fgColor: { rgb: 'FF0000' } },
+                                  font: { color: { rgb: '000000' } }
                                 };
                               }
                             });
@@ -149,9 +145,108 @@ module.exports = defineConfig({
               reject(err);
             }
           });
-        }
-      });
+        },
 
+        // ✅ Merge screenshots vertically
+        async mergeScreenshots({ inputFolder, outputFile }) {
+          try {
+            const imageFiles = fs.readdirSync(inputFolder)
+              .filter(f => /\.(png|jpe?g)$/i.test(f))
+              .sort((a, b) => {
+                const aIndex = parseInt(a.match(/\d+/)?.[0] || 0);
+                const bIndex = parseInt(b.match(/\d+/)?.[0] || 0);
+                return aIndex - bIndex;
+              });
+
+            const buffers = await Promise.all(
+              imageFiles.map(file => sharp(path.join(inputFolder, file)).ensureAlpha().toBuffer())
+            );
+
+            const images = await Promise.all(buffers.map(buf => sharp(buf).metadata()));
+            const totalHeight = images.reduce((sum, img) => sum + img.height, 0);
+            const width = Math.max(...images.map(img => img.width));
+
+            const compositeList = [];
+            let offsetY = 0;
+
+            for (let i = 0; i < buffers.length; i++) {
+              compositeList.push({ input: buffers[i], top: offsetY, left: 0 });
+              offsetY += images[i].height;
+            }
+
+            await sharp({
+              create: {
+                width,
+                height: totalHeight,
+                channels: 4,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+              }
+            })
+              .composite(compositeList)
+              .toFile(outputFile);
+
+            console.log(`🧩 Merged screenshot saved: ${outputFile}`);
+            return true;
+          } catch (err) {
+            console.error('❌ Error merging screenshots:', err);
+            return false;
+          }
+        },
+
+        // ✅ Typography Excel tasks
+        async readTypographyData(filePath) {
+          const workbook = new Excel.Workbook();
+          await workbook.xlsx.readFile(filePath);
+          const worksheet = workbook.getWorksheet('Typography');
+          const data = [];
+          worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) return;
+            data.push({
+              selector: row.getCell(1).text,
+              property: row.getCell(2).text,
+              expectedValue: row.getCell(3).text,
+              viewport: row.getCell(4).text,
+            });
+          });
+          return data;
+        },
+
+        async writeResultToExcel({ selector, property, expectedValue, actual, viewport, status }) {
+          const filePath = path.resolve('cypress/results/typography_results.xlsx');
+          const workbook = new Excel.Workbook();
+          let worksheet;
+
+          if (fs.existsSync(filePath)) {
+            await workbook.xlsx.readFile(filePath);
+            worksheet = workbook.getWorksheet('Results');
+          }
+
+          if (!worksheet) {
+            worksheet = workbook.addWorksheet('Results');
+            worksheet.addRow(['Selector', 'Property', 'Expected', 'Actual', 'Viewport', 'Status']);
+          }
+
+          worksheet.addRow([selector, property, expectedValue, actual, viewport, status]);
+
+          await workbook.xlsx.writeFile(filePath);
+          return true;
+        },
+        clearTempScreenshots({ folderPath }) {
+          try {
+            if (fs.existsSync(folderPath)) {
+              fs.readdirSync(folderPath).forEach(file => {
+                fs.unlinkSync(path.join(folderPath, file));
+              });
+              console.log('🧹 Cleared folder: ${folderPath}');
+            }
+            return true;
+          } catch (err) {
+            console.error('❌ Error clearing folder:', err);
+            return false;
+          }
+        },
+
+      });
       return config;
     }
   }

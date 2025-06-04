@@ -1,3 +1,5 @@
+const screenshotTempDir = './cypress/screenshots/temp';
+
 describe('Responsive Font Style Checker with Manual Scroll Option', () => {
   Cypress.config('defaultCommandTimeout', 3000000);
   Cypress.config('pageLoadTimeout', 3000000);
@@ -129,24 +131,39 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
             doc.querySelectorAll('img[loading="lazy"]').forEach(img => img.setAttribute('loading', 'eager'));
           });
 
-          cy.document().then(doc => {
-            return new Cypress.Promise((resolve) => {
-              let totalHeight = doc.body.scrollHeight;
-              let currentY = 0;
-              function scrollStep() {
-                if (currentY < totalHeight) {
-                  currentY += 300;
-                  window.scrollTo(0, currentY);
-                  setTimeout(scrollStep, 200);
-                } else {
-                  setTimeout(() => {
-                    window.scrollTo(0, 0);
-                    setTimeout(resolve, 1000);
-                  }, 1000);
-                }
+          const baseName = `${urlData.name || 'page'}_${view.name}`;
+          cy.task('clearTempScreenshots', { folderPath: screenshotTempDir });
+
+          cy.window().then(win => {
+            const height = win.document.documentElement.scrollHeight;
+            const viewportHeight = win.innerHeight;
+            const numScreens = Math.ceil(height / viewportHeight);
+
+            const scrollAndCapture = index => {
+              if (index >= numScreens) {
+                // Scroll back to top
+                cy.window().then(w => w.scrollTo(0, 0));
+                return;
               }
-              scrollStep();
-            });
+
+              cy.window().then(w => {
+                w.scrollTo(0, index * viewportHeight);
+              });
+
+              cy.wait(3000); // Give it time to render after scroll
+
+              cy.screenshot(`temp/${baseName}_screenshot_${index}`, { capture: 'viewport' }).then(() => {
+                scrollAndCapture(index + 1);
+              });
+            };
+
+            scrollAndCapture(0);
+          });
+
+          const mergedOutputPath = `cypress/screenshots/mismatches/${baseName}.png`;
+          cy.task('mergeScreenshots', {
+            inputFolder: screenshotTempDir,
+            outputFile: mergedOutputPath
           });
 
           cy.document().then(doc => {
@@ -204,18 +221,20 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
                       });
                     }
 
-                    results.push({ selector, 
+                    results.push({
+                      selector,
                       variant: rule.variant,
-                     Status: isMatch  ? 'Match'  : `Mismatch: ${mismatchDetails.map(d => d.prop).join(', ')}`, 
-                      expectedFontFamily: expected.fontFamily, 
-                      actualFontFamily , 
-                      expectedFontSize: expected.fontSize, 
-                      actualFontSize, 
-                      expectedLineHeight: expected.lineHeight, 
+                      Status: isMatch ? 'Match' : `Mismatch: ${mismatchDetails.map(d => d.prop).join(', ')}`,
+                      expectedFontFamily: expected.fontFamily,
+                      actualFontFamily,
+                      expectedFontSize: expected.fontSize,
+                      actualFontSize,
+                      expectedLineHeight: expected.lineHeight,
                       actualLineHeight,
-                      expectedFontWeight: expected.fontWeight,   
-                      actualFontWeight,   match: isMatch, 
-                      textContent: comp.textContent.slice(0, 100),                       
+                      expectedFontWeight: expected.fontWeight,
+                      actualFontWeight,
+                      match: isMatch,
+                      textContent: comp.textContent.slice(0, 100),
                     });
                   });
                 });
@@ -266,10 +285,6 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
 
             cy.then(() => {
               allViewportResults[view.name] = results;
-              if (overlays.length > 0) {
-                cy.wait(2000);
-                cy.screenshot(`mismatches/${urlData.name || 'page'}_${view.name}_all`);
-              }
             });
           });
         }).then(() => {
