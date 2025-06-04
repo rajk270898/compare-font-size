@@ -5,79 +5,33 @@ const { defineConfig } = require('cypress');
 
 module.exports = defineConfig({
   e2e: {
-    defaultCommandTimeout: 10000,
-    pageLoadTimeout: 30000,
     setupNodeEvents(on, config) {
       on('task', {
-        ensureDir(dirPath) {
-          if (!fs.existsSync(dirPath)) {
-            fs.mkdirSync(dirPath, { recursive: true });
-          }
-          return null;
-        },
-        deleteFolder(folderPath) {
-          if (fs.existsSync(folderPath)) {
-            fs.rmSync(folderPath, { recursive: true, force: true });
-            // Recreate the empty folder
-            fs.mkdirSync(folderPath, { recursive: true });
-          }
-          return null;
-        },
         readExcel({ filePath }) {
           try {
-            console.log('Reading Excel file from:', filePath);
             const absolutePath = path.resolve(filePath);
-            console.log('Absolute path:', absolutePath);
-            
             if (!fs.existsSync(absolutePath)) {
               console.log('❌ Excel file not found at:', absolutePath);
               return null;
             }
-            
-            console.log('Reading workbook...');
+
             const workbook = XLSX.readFile(absolutePath);
-            console.log('Available sheets:', workbook.SheetNames);
-            
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
-            
-            console.log('Converting to JSON...');
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, {
               header: 1,
               raw: true,
               defval: ''
             });
 
-            jsonData.slice(1).forEach(row => {
-              if (Array.isArray(row)) {
-                for (let i = 2; i <= 6; i++) {
-                  if (row[i] !== undefined && row[i] !== '') {
-                    row[i] = row[i].toString().replace('px', '').trim();
-                  }
-                }
-                if (row[8] !== undefined && row[8] !== '') {
-                  row[8] = row[8].toString().trim();
-                }
-              }
-            });
-
-            console.log('Excel Data Structure:');
-            console.log('Number of rows:', jsonData.length);
-            console.log('Headers:', jsonData[0]);
-            console.log('First data row:', jsonData[1]);
-            console.log('Second data row:', jsonData[2]);
-            
-            const headers = jsonData[0];
-            headers.forEach((header, index) => {
-              console.log(`Column ${index}: "${header}"`);
-            });
-
             return jsonData;
           } catch (err) {
-            console.error('Error reading Excel file:', err);
+            console.error('❌ Error reading Excel file:', err);
             return null;
           }
         },
+
         writeExcelSheets({ data, filename, sheetOrder }) {
           return new Promise((resolve, reject) => {
             try {
@@ -93,40 +47,34 @@ module.exports = defineConfig({
                 Sheets: {}
               };
 
-              // Process sheets in the specified order
               (sheetOrder || Object.keys(data)).forEach(sheetName => {
                 const sheetData = data[sheetName];
-                if (!sheetData || !Array.isArray(sheetData) || sheetData.length === 0) {
-                  console.log(`⚠️ No data for sheet "${sheetName}", skipping sheet creation.`);
-                  return;
-                }
+                if (!sheetData || !Array.isArray(sheetData) || sheetData.length === 0) return;
 
                 const worksheet = {};
                 const range = { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
-
                 const columns = new Set();
+
                 sheetData.forEach(row => {
                   if (row && typeof row === 'object') {
                     Object.keys(row).forEach(key => columns.add(key));
                   }
                 });
+
                 const columnArray = Array.from(columns);
 
+                // Write header row
                 columnArray.forEach((col, idx) => {
                   const cellRef = XLSX.utils.encode_cell({ r: 0, c: idx });
                   worksheet[cellRef] = {
                     v: col,
                     t: 's',
-                    s: {
-                      font: { bold: false }
-                    }
+                    s: { font: { bold: true } }
                   };
                   range.e.c = Math.max(range.e.c, idx);
                 });
 
                 sheetData.forEach((row, rowIdx) => {
-                  if (!row || typeof row !== 'object') return;
-
                   columnArray.forEach((col, colIdx) => {
                     const cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
                     const value = row[col];
@@ -137,68 +85,55 @@ module.exports = defineConfig({
                       s: {}
                     };
 
-                    if (col === 'Status' && value) {
-                      if (value.includes('Mismatch')) {
-                        worksheet[cellRef].s = {
-                          fill: {
-                            patternType: 'solid',
-                            fgColor: { rgb: 'FF0000' }
-                          },
-                          font: {
-                            bold: false,
-                            color: { rgb: '#000000' }
-                          }
-                        };
-                      } else if (value.includes('No Line Height in Guide')) {
-                        worksheet[cellRef].s = {
-                          fill: {
-                            patternType: 'solid',
-                            fgColor: { rgb: 'FFFF00' }
-                          },
-                          font: {
-                            bold: false,
-                            color: { rgb: '#000000' }
-                          }
-                        };
-                      }
+                    // Highlight mismatched values
+                    if (col === 'Status' && value && value.includes('Mismatch')) {
+                      worksheet[cellRef].s = {
+                        fill: {
+                          patternType: 'solid',
+                          fgColor: { rgb: 'FF0000' }
+                        },
+                        font: {
+                          color: { rgb: '000000' }
+                        }
+                      };
 
                       const mismatchTypes = {
                         'Font Size': ['Expected_fontSize', 'Actual_fontSize'],
                         'Font Weight': ['Expected_fontWeight', 'Actual_fontWeight'],
                         'Font Family': ['Expected_fontFamily', 'Actual_fontFamily'],
-                        'Line Height': ['Expected_lineHeight', 'Actual_lineHeight'],
+                        'Line Height': ['Expected_lineHeight', 'Actual_lineHeight']
                       };
 
                       Object.entries(mismatchTypes).forEach(([type, cols]) => {
                         if (value.includes(type)) {
-                          cols.forEach(colName => {
-                            const colIdx = columnArray.indexOf(colName);
-                            if (colIdx !== -1) {
-                              const mismatchCellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
-                              if (!worksheet[mismatchCellRef]) {
-                                worksheet[mismatchCellRef] = {
-                                  v: row[colName] || '',
-                                  t: 's',
-                                  s: {}
+                          const isFontWeight = type === 'Font Weight';
+                          const expectedCol = cols[0];
+                          const expectedVal = row[expectedCol];
+
+                          // Skip Font Weight mismatch if Expected value is missing or '-'
+                          if (!isFontWeight || (expectedVal && expectedVal !== '-')) {
+                            cols.forEach(colName => {
+                              const colIndex = columnArray.indexOf(colName);
+                              if (colIndex !== -1) {
+                                const mismatchCell = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIndex });
+                                worksheet[mismatchCell].s = {
+                                  fill: {
+                                    patternType: 'solid',
+                                    fgColor: { rgb: 'FF0000' }
+                                  },
+                                  font: {
+                                    color: { rgb: '000000' }
+                                  }
                                 };
                               }
-                              worksheet[mismatchCellRef].s = {
-                                fill: {
-                                  patternType: 'solid',
-                                  fgColor: { rgb: 'FF0000' }
-                                },
-                                font: {
-                                  bold: false,
-                                  color: { rgb: '#000000' }
-                                }
-                              };
-                            }
-                          });
+                            });
+                          }
                         }
                       });
                     }
+
+                    range.e.r = Math.max(range.e.r, rowIdx + 1);
                   });
-                  range.e.r = Math.max(range.e.r, rowIdx + 1);
                 });
 
                 worksheet['!ref'] = XLSX.utils.encode_range(range);
@@ -207,10 +142,10 @@ module.exports = defineConfig({
               });
 
               XLSX.writeFile(workbook, outputPath);
-              console.log(`✅ Excel file with ordered sheets written to: ${outputPath}`);
+              console.log(`✅ Excel written to: ${outputPath}`);
               resolve(null);
             } catch (err) {
-              console.error('❌ Error writing Excel sheets:', err);
+              console.error('❌ Error writing Excel file:', err);
               reject(err);
             }
           });
