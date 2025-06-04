@@ -174,6 +174,9 @@ module.exports = defineConfig({
               offsetY += images[i].height;
             }
 
+            const outputDir = path.dirname(outputFile);
+            fs.mkdirSync(outputDir, { recursive: true });
+
             await sharp({
               create: {
                 width,

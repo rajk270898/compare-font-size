@@ -65,6 +65,50 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
     return { style, textContent: text };
   };
 
+  const injectOverlays = (doc, overlays) => {
+    doc.querySelectorAll('.font-check-overlay, .font-check-label').forEach(el => el.remove());
+
+    overlays.forEach(box => {
+      const overlay = doc.createElement('div');
+      Object.assign(overlay.style, {
+        position: 'absolute',
+        top: `${box.top}px`,
+        left: `${box.left}px`,
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+        backgroundColor: 'rgba(0, 0, 0, 0.1)',
+        pointerEvents: 'none',
+        zIndex: 9999,
+        border: '1px solid rgba(0, 0, 0, 0.5)'
+      });
+      overlay.classList.add('font-check-overlay');
+      doc.body.appendChild(overlay);
+
+      const mismatchDetails = box.mismatchDetails
+        .filter(d => d.expected !== '-')
+        .map(d => `${d.prop}: expected ${d.expected}, actual ${d.actual}`)
+        .join(', ');
+
+      const label = doc.createElement('div');
+      label.textContent = `Mismatch: ${box.selector} (${box.variant}) [${mismatchDetails}]`;
+      Object.assign(label.style, {
+        position: 'absolute',
+        top: `${box.top - 20}px`,
+        left: `${box.left}px`,
+        backgroundColor: 'rgba(255,255,255,0.85)',
+        color: 'red',
+        fontSize: '12px',
+        padding: '2px 4px',
+        zIndex: 10000,
+        fontWeight: 'bold',
+        borderRadius: '3px',
+        maxWidth: '350px'
+      });
+      label.classList.add('font-check-label');
+      doc.body.appendChild(label);
+    });
+  };
+
   before(() => {
     cy.task('readExcel', { filePath: './cypress/fixtures/Style Guide.xlsx' }).then(data => {
       const headers = data[0];
@@ -134,45 +178,28 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
           const baseName = `${urlData.name || 'page'}_${view.name}`;
           cy.task('clearTempScreenshots', { folderPath: screenshotTempDir });
 
-          cy.window().then(win => {
-            const height = win.document.documentElement.scrollHeight;
-            const viewportHeight = win.innerHeight;
-            const numScreens = Math.ceil(height / viewportHeight);
-
-            const scrollAndCapture = index => {
-              if (index >= numScreens) {
-                // Scroll back to top
-                cy.window().then(w => w.scrollTo(0, 0));
-                return;
-              }
-
-              cy.window().then(w => {
-                w.scrollTo(0, index * viewportHeight);
-              });
-
-              cy.wait(3000); // Give it time to render after scroll
-
-              cy.screenshot(`temp/${baseName}_screenshot_${index}`, { capture: 'viewport' }).then(() => {
-                scrollAndCapture(index + 1);
-              });
-            };
-
-            scrollAndCapture(0);
-          });
-
-          const mergedOutputPath = `cypress/screenshots/mismatches/${baseName}.png`;
-          cy.task('mergeScreenshots', {
-            inputFolder: screenshotTempDir,
-            outputFile: mergedOutputPath
-          });
-
+          // Compute mismatches + prepare overlays first
           cy.document().then(doc => {
             for (const [selector, rules] of Object.entries(fontRules)) {
               if (selector.includes('iframe')) continue;
               const elements = Array.from(doc.querySelectorAll(selector));
               if (elements.length === 0) {
                 rules.forEach(rule => {
-                  results.push({ selector, variant: rule.variant, expectedFontFamily: rule.fontFamily, expectedFontWeight: rule.fontWeight, expectedLineHeight: rule.lineHeight, expectedFontSize: rule[view.name] || '-', actualFontFamily: 'Not found', actualFontWeight: 'Not found', actualLineHeight: 'Not found', actualFontSize: 'Not found', match: false, textContent: '', Status: 'Selector not found' });
+                  results.push({
+                    selector,
+                    variant: rule.variant,
+                    expectedFontFamily: rule.fontFamily,
+                    expectedFontWeight: rule.fontWeight,
+                    expectedLineHeight: rule.lineHeight,
+                    expectedFontSize: rule[view.name] || '-',
+                    actualFontFamily: 'Not found',
+                    actualFontWeight: 'Not found',
+                    actualLineHeight: 'Not found',
+                    actualFontSize: 'Not found',
+                    match: false,
+                    textContent: '',
+                    Status: 'Selector not found'
+                  });
                 });
               } else {
                 rules.forEach(rule => {
@@ -241,51 +268,50 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
               }
             }
 
-            doc.querySelectorAll('.font-check-overlay, .font-check-label').forEach(el => el.remove());
+            injectOverlays(doc, overlays);
+          });
+            // ⬇️ Scroll and take screenshots with overlays now visible
+            cy.window().then(win => {
+              const documentHeight = win.document.documentElement.scrollHeight;
+              const viewportHeight = win.innerHeight;
+              const overlap = 100;
 
-            overlays.forEach(box => {
-              const overlay = doc.createElement('div');
-              Object.assign(overlay.style, {
-                position: 'absolute',
-                top: `${box.top}px`,
-                left: `${box.left}px`,
-                width: `${box.width}px`,
-                height: `${box.height}px`,
-                backgroundColor: 'rgba(0, 0, 0, 0.1)',
-                pointerEvents: 'none',
-                zIndex: 9999,
-                border: '1px solid rgba(0, 0, 0, 0.5)'
-              });
-              overlay.classList.add('font-check-overlay');
-              doc.body.appendChild(overlay);
+              const positions = [];
+              let scrollY = 0;
 
-              const mismatchDetails = box.mismatchDetails
-                .filter(d => d.expected !== '-')
-                .map(d => `${d.prop}: expected ${d.expected}, actual ${d.actual}`)
-                .join(', ');
+              while (scrollY < documentHeight) {
+                positions.push(scrollY);
+                scrollY += (viewportHeight - overlap);
+              }
 
-              const label = doc.createElement('div');
-              label.textContent = `Mismatch: ${box.selector} (${box.variant}) [${mismatchDetails}]`;
-              Object.assign(label.style, {
-                position: 'absolute',
-                top: `${box.top - 20}px`,
-                left: `${box.left}px`,
-                backgroundColor: 'rgba(255,255,255,0.85)',
-                color: 'red',
-                fontSize: '12px',
-                padding: '2px 4px',
-                zIndex: 10000,
-                fontWeight: 'bold',
-                borderRadius: '3px',
-                maxWidth: '350px'
-              });
-              label.classList.add('font-check-label');
-              doc.body.appendChild(label);
+              const scrollAndCapture = index => {
+                if (index >= positions.length) {
+                  cy.window().then(w => w.scrollTo(0, 0)); // scroll back to top at the end
+                  return;
+                }
+
+                cy.window().then(w => {
+                  w.scrollTo(0, positions[index]);
+                });
+
+                cy.wait(3000); // wait for scroll and overlay visibility
+
+                cy.screenshot(`temp/${baseName}_screenshot_${index}`, { capture: 'viewport' }).then(() => {
+                  scrollAndCapture(index + 1);
+                });
+              };
+
+              scrollAndCapture(0);
             });
+          // ⬇️ Merge all into one image
+          const mergedOutputPath = `./cypress/screenshots/mismatches/${baseName}.png`;
+          cy.task('mergeScreenshots', {
+            inputFolder: screenshotTempDir,
+            outputFile: mergedOutputPath
+          });
 
-            cy.then(() => {
-              allViewportResults[view.name] = results;
-            });
+          cy.then(() => {
+            allViewportResults[view.name] = results;
           });
         }).then(() => {
           const sheetOrder = Object.keys(allViewportResults).sort((a, b) => parseInt(b.replace(/px/gi, '')) - parseInt(a.replace(/px/gi, '')));
