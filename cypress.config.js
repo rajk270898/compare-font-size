@@ -7,11 +7,10 @@ const { defineConfig } = require('cypress');
 
 module.exports = defineConfig({
   e2e: {
-    
     setupNodeEvents(on, config) {
       on('task', {
+
         // ✅ Read style guide data
-        
         readExcel({ filePath }) {
           try {
             const absolutePath = path.resolve(filePath);
@@ -29,7 +28,6 @@ module.exports = defineConfig({
               raw: true,
               defval: ''
             });
-            
 
             return jsonData;
           } catch (err) {
@@ -49,10 +47,7 @@ module.exports = defineConfig({
                 fs.mkdirSync(dirPath, { recursive: true });
               }
 
-              const workbook = {
-                SheetNames: [],
-                Sheets: {}
-              };
+              const workbook = { SheetNames: [], Sheets: {} };
 
               (sheetOrder || Object.keys(data)).forEach(sheetName => {
                 const sheetData = data[sheetName];
@@ -70,7 +65,7 @@ module.exports = defineConfig({
 
                 const columnArray = Array.from(columns);
 
-                // Write header
+                // Header row
                 columnArray.forEach((col, idx) => {
                   const cellRef = XLSX.utils.encode_cell({ r: 0, c: idx });
                   worksheet[cellRef] = {
@@ -152,11 +147,7 @@ module.exports = defineConfig({
           try {
             const imageFiles = fs.readdirSync(inputFolder)
               .filter(f => /\.(png|jpe?g)$/i.test(f))
-              .sort((a, b) => {
-                const aIndex = parseInt(a.match(/\d+/)?.[0] || 0);
-                const bIndex = parseInt(b.match(/\d+/)?.[0] || 0);
-                return aIndex - bIndex;
-              });
+              .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
             const buffers = await Promise.all(
               imageFiles.map(file => sharp(path.join(inputFolder, file)).ensureAlpha().toBuffer())
@@ -189,6 +180,10 @@ module.exports = defineConfig({
               .toFile(outputFile);
 
             console.log(`🧩 Merged screenshot saved: ${outputFile}`);
+
+            // Optionally delete individual images after merge
+            // imageFiles.forEach(file => fs.unlinkSync(path.join(inputFolder, file)));
+
             return true;
           } catch (err) {
             console.error('❌ Error merging screenshots:', err);
@@ -196,7 +191,7 @@ module.exports = defineConfig({
           }
         },
 
-        // ✅ Typography Excel tasks
+        // ✅ Typography Excel reader
         async readTypographyData(filePath) {
           const workbook = new Excel.Workbook();
           await workbook.xlsx.readFile(filePath);
@@ -214,6 +209,7 @@ module.exports = defineConfig({
           return data;
         },
 
+        // ✅ Save results to new Excel sheet
         async writeResultToExcel({ selector, property, expectedValue, actual, viewport, status }) {
           const filePath = path.resolve('cypress/results/typography_results.xlsx');
           const workbook = new Excel.Workbook();
@@ -234,13 +230,15 @@ module.exports = defineConfig({
           await workbook.xlsx.writeFile(filePath);
           return true;
         },
+
+        // ✅ Clean screenshot temp folder
         clearTempScreenshots({ folderPath }) {
           try {
             if (fs.existsSync(folderPath)) {
               fs.readdirSync(folderPath).forEach(file => {
                 fs.unlinkSync(path.join(folderPath, file));
               });
-              console.log('🧹 Cleared folder: ${folderPath}');
+              console.log(`🧹 Cleared folder: ${folderPath}`);
             }
             return true;
           } catch (err) {
@@ -250,6 +248,7 @@ module.exports = defineConfig({
         },
 
       });
+
       return config;
     }
   }

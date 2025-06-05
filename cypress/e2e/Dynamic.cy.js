@@ -7,7 +7,17 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
   let fontRules = {};
   let viewports = [];
 
-  const normalizeFontSize = value => value?.toString().replace(/px/gi, '').trim() || '';
+  const normalizeFontSize = value => {
+    const num = parseFloat(value);
+    return isNaN(num) ? '-' : `${num}px`;
+  };
+
+  const normalizeFontWeight = value => {
+    if (!value || value === '-') return '-';
+    const map = { normal: '400', bold: '700' };
+    const lower = value.toString().trim().toLowerCase();
+    return map[lower] || value;
+  };
 
   const calculateLineHeight = (lineHeightValue, fontSize) => {
     if (!lineHeightValue || lineHeightValue === '-') return '-';
@@ -35,13 +45,12 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
 
   const getComputedStyleForElement = rootElement => {
     let maxFontSize = -1;
-    let bestStyle = null, bestText = '';
+    let bestMatch = null;
 
     const traverse = el => {
       if (!(el instanceof HTMLElement)) return;
-      if (el.tagName.toLowerCase() === 'div' &&
-        !Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim())) return;
 
+      const tag = el.tagName.toLowerCase();
       const style = window.getComputedStyle(el);
       const fontSize = parseFloat(style.fontSize);
       const text = Array.from(el.childNodes)
@@ -50,18 +59,25 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
         .join(' ')
         .trim();
 
-      if (text && fontSize > maxFontSize) {
+      if (!text) return;
+
+      const isSemanticTag = /h[1-6]|p|button|span|label|strong/.test(tag);
+      const isCurrentSemantic = bestMatch && /h[1-6]|p|button|span|label|strong/.test(bestMatch.tagName.toLowerCase());
+
+      if (
+        (fontSize > maxFontSize || (fontSize === maxFontSize && isSemanticTag)) &&
+        (!bestMatch || isSemanticTag || !isCurrentSemantic)
+      ) {
         maxFontSize = fontSize;
-        bestStyle = style;
-        bestText = text;
+        bestMatch = el;
       }
 
       Array.from(el.children).forEach(traverse);
     };
 
     traverse(rootElement);
-    const style = bestStyle || window.getComputedStyle(rootElement);
-    const text = bestText || rootElement.textContent.trim();
+    const style = bestMatch ? window.getComputedStyle(bestMatch) : window.getComputedStyle(rootElement);
+    const text = bestMatch ? bestMatch.textContent.trim() : rootElement.textContent.trim();
     return { style, textContent: text };
   };
 
@@ -108,11 +124,13 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
       doc.body.appendChild(label);
     });
   };
-
   before(() => {
     cy.task('readExcel', { filePath: './cypress/fixtures/Style Guide.xlsx' }).then(data => {
       const headers = data[0];
-      const resCols = headers.map((h, i) => isResolution(h) ? { index: i, resolution: String(h).trim() } : null).filter(Boolean);
+      const resCols = headers
+        .map((h, i) => isResolution(h) ? { index: i, resolution: String(h).trim() } : null)
+        .filter(Boolean);
+
       viewports = resCols.map(c => createViewportConfig(c.resolution));
 
       const colIdx = name => headers.findIndex(h => h?.toString().toLowerCase().includes(name));
@@ -122,18 +140,36 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
       const variantIdx = colIdx('variant');
 
       fontRules = {};
+
       data.slice(1).forEach(row => {
         const selector = row[0]?.trim().toLowerCase();
         if (!selector) return;
+
+        const rawLineHeight = row[lineHeightIdx]?.toString().trim() || '-';
+
         const rule = {
           fontFamily: row[fontFamilyIdx]?.trim() || '-',
           fontWeight: row[fontWeightIdx]?.toString().trim() || '-',
-          lineHeight: row[lineHeightIdx]?.toString().trim() || '-',
+          lineHeight: rawLineHeight,
           variant: row[variantIdx]?.toString().trim() || '-'
         };
+
         resCols.forEach(c => {
-          rule[c.resolution] = row[c.index]?.toString().split('/')[0]?.trim() || '-';
+          const fontSize = row[c.index]?.toString().split('/')[0]?.trim() || '-';
+          let expectedLineHeight = rawLineHeight;
+
+          if (!expectedLineHeight.includes('px') && expectedLineHeight !== '-' && fontSize !== '-') {
+            const num = parseFloat(expectedLineHeight);
+            const size = parseFloat(fontSize);
+            if (!isNaN(num) && !isNaN(size)) {
+              expectedLineHeight = Math.round(num * size) + 'px';
+            }
+          }
+
+          rule[c.resolution] = fontSize;
+          rule[`lineHeight_${c.resolution}`] = expectedLineHeight;
         });
+
         (fontRules[selector] ||= []).push(rule);
       });
     });
@@ -178,7 +214,6 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
           const baseName = `${urlData.name || 'page'}_${view.name}`;
           cy.task('clearTempScreenshots', { folderPath: screenshotTempDir });
 
-          // Compute mismatches + prepare overlays first
           cy.document().then(doc => {
             for (const [selector, rules] of Object.entries(fontRules)) {
               if (selector.includes('iframe')) continue;
@@ -204,18 +239,24 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
               } else {
                 rules.forEach(rule => {
                   elements.forEach(el => {
+                    const expectedFontSize = normalizeFontSize(rule[view.name] || '-');
+                    const expectedLineHeight = calculateLineHeight(rule[`lineHeight_${view.name}`], expectedFontSize);
+                    const expectedFontWeight = normalizeFontWeight(rule.fontWeight || '-');
+                    const expectedFontFamily = rule.fontFamily || '-';
+
                     const comp = getComputedStyleForElement(el);
+
                     const actualFontSizeRaw = comp.style.fontSize || '-';
                     const actualFontSize = normalizeFontSize(actualFontSizeRaw);
                     const actualLineHeight = calculateLineHeight(comp.style.lineHeight || '-', actualFontSizeRaw);
-                    const actualFontWeight = comp.style.fontWeight || '-';
+                    const actualFontWeight = normalizeFontWeight(comp.style.fontWeight || '-');
                     const actualFontFamily = comp.style.fontFamily || '-';
-
+                    
                     const expected = {
                       fontSize: rule[view.name] || '-',
                       fontFamily: rule.fontFamily,
                       fontWeight: rule.fontWeight,
-                      lineHeight: rule.lineHeight
+                      lineHeight: expectedLineHeight
                     };
 
                     const mismatchDetails = [];
@@ -270,40 +311,41 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
 
             injectOverlays(doc, overlays);
           });
-            // ⬇️ Scroll and take screenshots with overlays now visible
-            cy.window().then(win => {
-              const documentHeight = win.document.documentElement.scrollHeight;
-              const viewportHeight = win.innerHeight;
-              const overlap = 100;
 
-              const positions = [];
-              let scrollY = 0;
+          cy.window().then(win => {
+            const documentHeight = win.document.documentElement.scrollHeight;
+            const viewportHeight = win.innerHeight;
+            const overlap = 100;
 
-              while (scrollY < documentHeight) {
-                positions.push(scrollY);
-                scrollY += (viewportHeight - overlap);
+            const positions = [];
+            let scrollY = 0;
+
+            while (scrollY < documentHeight) {
+              positions.push(scrollY);
+              scrollY += (viewportHeight - overlap);
+            }
+
+            const scrollAndCapture = index => {
+              if (index >= positions.length) {
+                cy.window().then(w => w.scrollTo(0, 0));
+                return;
               }
 
-              const scrollAndCapture = index => {
-                if (index >= positions.length) {
-                  cy.window().then(w => w.scrollTo(0, 0)); // scroll back to top at the end
-                  return;
-                }
+              cy.window().then(w => {
+                w.scrollTo(0, positions[index]);
+              });
 
-                cy.window().then(w => {
-                  w.scrollTo(0, positions[index]);
-                });
+              cy.wait(3000);
 
-                cy.wait(3000); // wait for scroll and overlay visibility
+              const paddedIndex = String(index).padStart(3, '0');
+              cy.screenshot(`temp/${baseName}_screenshot_${paddedIndex}`, { capture: 'viewport' }).then(() => {
+                scrollAndCapture(index + 1);
+              });
+            };
 
-                cy.screenshot(`temp/${baseName}_screenshot_${index}`, { capture: 'viewport' }).then(() => {
-                  scrollAndCapture(index + 1);
-                });
-              };
+            scrollAndCapture(0);
+          });
 
-              scrollAndCapture(0);
-            });
-          // ⬇️ Merge all into one image
           const mergedOutputPath = `./cypress/screenshots/mismatches/${baseName}.png`;
           cy.task('mergeScreenshots', {
             inputFolder: screenshotTempDir,
