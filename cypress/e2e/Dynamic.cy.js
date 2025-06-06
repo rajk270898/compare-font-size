@@ -1,5 +1,6 @@
 const screenshotTempDir = './cypress/screenshots/temp';
 
+// Full test suite for font validation
 describe('Responsive Font Style Checker with Manual Scroll Option', () => {
   Cypress.config('defaultCommandTimeout', 3000000);
   Cypress.config('pageLoadTimeout', 3000000);
@@ -81,49 +82,154 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
     return { style, textContent: text };
   };
 
-  const injectOverlays = (doc, overlays) => {
-    doc.querySelectorAll('.font-check-overlay, .font-check-label').forEach(el => el.remove());
+function injectOverlays(doc, overlays, scrollY = 0) {
+  const existingOverlay = doc.querySelector('.font-check-overlay');
+  if (existingOverlay) existingOverlay.remove();
 
-    overlays.forEach(box => {
-      const overlay = doc.createElement('div');
-      Object.assign(overlay.style, {
-        position: 'absolute',
-        top: `${box.top}px`,
-        left: `${box.left}px`,
-        width: `${box.width}px`,
-        height: `${box.height}px`,
-        backgroundColor: 'rgba(0, 0, 0, 0.1)',
-        pointerEvents: 'none',
-        zIndex: 9999,
-        border: '1px solid rgba(0, 0, 0, 0.5)'
-      });
-      overlay.classList.add('font-check-overlay');
-      doc.body.appendChild(overlay);
+  const overlayContainer = doc.createElement('div');
+  overlayContainer.className = 'font-check-overlay';
+  Object.assign(overlayContainer.style, {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    width: '100%',
+    height: '100%',
+    pointerEvents: 'none',
+    zIndex: '9999'
+  });
 
-      const mismatchDetails = box.mismatchDetails
-        .filter(d => d.expected !== '-')
-        .map(d => `${d.prop}: expected ${d.expected}, actual ${d.actual}`)
-        .join(', ');
+  // Constants for layout
+  const HEADER_HEIGHT = 80;
+  const FOOTER_HEIGHT = 80;
+  const LABEL_HEIGHT = 32;
+  const LABEL_SPACING = 8;
+  const LABEL_MAX_WIDTH = 450;
+  const COLUMN_SPACING = 20;
+  const GRID_CELL_HEIGHT = LABEL_HEIGHT + LABEL_SPACING;
+  const MIN_VERTICAL_GAP = 10; // Minimum gap between labels
 
-      const label = doc.createElement('div');
-      label.textContent = `Mismatch: ${box.selector} (${box.variant}) [${mismatchDetails}]`;
-      Object.assign(label.style, {
-        position: 'absolute',
-        top: `${box.top - 20}px`,
-        left: `${box.left}px`,
-        backgroundColor: 'rgba(255,255,255,0.85)',
-        color: 'red',
-        fontSize: '12px',
-        padding: '2px 4px',
-        zIndex: 10000,
-        fontWeight: 'bold',
-        borderRadius: '3px',
-        maxWidth: '350px'
-      });
-      label.classList.add('font-check-label');
-      doc.body.appendChild(label);
-    });
+  // Initialize layout tracking
+  const pageHeight = doc.documentElement.scrollHeight;
+  const pageWidth = doc.documentElement.clientWidth;
+  const usedAreas = new Set(); // Track used areas to prevent overlaps
+
+  // Helper function to check if a position is available
+  const isPositionAvailable = (top, left, width, height) => {
+    const box = `${Math.round(top)},${Math.round(left)},${Math.round(width)},${Math.round(height)}`;
+    if (usedAreas.has(box)) return false;
+    
+    // Check for overlaps with existing labels
+    for (const area of usedAreas) {
+      const [existingTop, existingLeft, existingWidth, existingHeight] = area.split(',').map(Number);
+      if (!(left + width <= existingLeft || 
+            existingLeft + existingWidth <= left || 
+            top + height <= existingTop - MIN_VERTICAL_GAP || 
+            existingTop + existingHeight <= top - MIN_VERTICAL_GAP)) {
+        return false;
+      }
+    }
+    return true;
   };
+
+  // Group overlays by their vertical position
+  const groupedOverlays = overlays.reduce((groups, overlay) => {
+    const el = doc.querySelector(overlay.selector);
+    if (!el) return groups;
+    
+    const rect = el.getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    const groupKey = Math.floor(top / 100) * 100;
+    
+    if (!groups[groupKey]) groups[groupKey] = [];
+    groups[groupKey].push({ ...overlay, rect, el, top });
+    return groups;
+  }, {});
+
+  // Process overlays in vertical order
+  Object.entries(groupedOverlays)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .forEach(([_, sectionOverlays]) => {
+      // Sort elements within each section by their DOM order
+      sectionOverlays
+        .sort((a, b) => a.top - b.top)
+        .forEach(({ selector, mismatchDetails, rect, el }) => {
+          if (!el || !rect) return;
+
+          const mismatchText = mismatchDetails.map(
+            m => `${m.prop}: expected ${m.expected}, actual ${m.actual}`
+          ).join(', ');
+
+          const label = `Mismatch: ${selector} (-) [${mismatchText}]`;
+          const labelDiv = doc.createElement('div');
+          labelDiv.className = 'font-check-label';
+          labelDiv.textContent = label;
+
+          // Calculate initial position
+          const elementTop = rect.top + window.scrollY;
+          const elementBottom = rect.bottom + window.scrollY;
+          let labelTop = elementBottom + 4;
+          let labelLeft = Math.min(Math.max(rect.left, LABEL_SPACING), pageWidth - LABEL_MAX_WIDTH - LABEL_SPACING);
+          
+          // Try different positions until we find an available spot
+          let attempts = 0;
+          const maxAttempts = 5;
+          
+          while (attempts < maxAttempts) {
+            if (isPositionAvailable(labelTop, labelLeft, LABEL_MAX_WIDTH, LABEL_HEIGHT)) {
+              break;
+            }
+            
+            // Try different positions in this order:
+            // 1. Move down
+            // 2. Move to the right
+            // 3. Try above the element
+            if (attempts === 0) {
+              labelTop += GRID_CELL_HEIGHT;
+            } else if (attempts === 1) {
+              labelLeft += LABEL_MAX_WIDTH + COLUMN_SPACING;
+              labelTop = elementBottom + 4;
+            } else if (attempts === 2) {
+              labelTop = elementTop - LABEL_HEIGHT - 4;
+              labelLeft = Math.min(Math.max(rect.left, LABEL_SPACING), pageWidth - LABEL_MAX_WIDTH - LABEL_SPACING);
+            } else {
+              labelTop += GRID_CELL_HEIGHT;
+            }
+            
+            attempts++;
+          }
+
+          // If we found a valid position, place the label
+          if (attempts < maxAttempts) {
+            const box = `${Math.round(labelTop)},${Math.round(labelLeft)},${LABEL_MAX_WIDTH},${LABEL_HEIGHT}`;
+            usedAreas.add(box);
+
+            Object.assign(labelDiv.style, {
+              position: 'absolute',
+              top: `${labelTop}px`,
+              left: `${labelLeft}px`,
+              backgroundColor: 'rgba(248, 218, 218, 0.9)',
+              color: '#cc0000',
+              fontSize: '12px',
+              fontWeight: '500',
+              padding: '6px 10px',
+              borderRadius: '4px',
+              zIndex: '10000',
+              pointerEvents: 'none',
+              whiteSpace: 'pre-wrap',
+              maxWidth: `${LABEL_MAX_WIDTH}px`,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+              lineHeight: '1.4',
+              border: '1px solid rgba(204, 0, 0, 0.2)'
+            });
+
+            overlayContainer.appendChild(labelDiv);
+          }
+        });
+    });
+
+  doc.body.appendChild(overlayContainer);
+}
+
   before(() => {
     cy.task('readExcel', { filePath: './cypress/fixtures/Style Guide.xlsx' }).then(data => {
       const headers = data[0];
@@ -174,7 +280,7 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
       });
     });
   });
-
+  
   Cypress.on('uncaught:exception', () => false);
 
   it('checks font styles across URLs and viewports', () => {
@@ -308,43 +414,56 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
                 });
               }
             }
-
-            injectOverlays(doc, overlays);
           });
 
-          cy.window().then(win => {
-            const documentHeight = win.document.documentElement.scrollHeight;
-            const viewportHeight = win.innerHeight;
-            const overlap = 100;
-
-            const positions = [];
-            let scrollY = 0;
-
-            while (scrollY < documentHeight) {
-              positions.push(scrollY);
-              scrollY += (viewportHeight - overlap);
+          const performScrollAndCapture = (positions, overlays, baseName) => {
+          const scrollAndCapture = index => {
+            if (index >= positions.length) {
+              cy.window().then(w => w.scrollTo(0, 0));
+              return;
             }
 
-            const scrollAndCapture = index => {
-              if (index >= positions.length) {
-                cy.window().then(w => w.scrollTo(0, 0));
-                return;
-              }
+            const currentScroll = positions[index];
 
-              cy.window().then(w => {
-                w.scrollTo(0, positions[index]);
+            cy.window().then(w => {
+              w.scrollTo(0, currentScroll);
+            });
+
+            cy.wait(1000).then(() => {
+              cy.document().then(doc => {
+                console.log('Injecting overlays at scrollY:', currentScroll, 'Index:', index);
+                injectOverlays(doc, overlays, currentScroll);
               });
+            });
 
-              cy.wait(3000);
-
+            cy.wait(1500).then(() => {
               const paddedIndex = String(index).padStart(3, '0');
               cy.screenshot(`temp/${baseName}_screenshot_${paddedIndex}`, { capture: 'viewport' }).then(() => {
+                cy.document().then(doc => {
+                  const old = doc.querySelector('.font-check-overlay');
+                  if (old) old.remove();
+                });
                 scrollAndCapture(index + 1);
               });
-            };
+            });
+          };
+          scrollAndCapture(0);
+        };
 
-            scrollAndCapture(0);
-          });
+        cy.window().then(win => {
+          const documentHeight = win.document.documentElement.scrollHeight;
+          const viewportHeight = win.innerHeight;
+          const overlap = 100;
+
+          const positions = [];
+          let scrollY = 0;
+          while (scrollY < documentHeight) {
+            positions.push(scrollY);
+            scrollY += (viewportHeight - overlap);
+          }
+
+          performScrollAndCapture(positions, overlays, baseName);
+        });
 
           const mergedOutputPath = `./cypress/screenshots/mismatches/${baseName}.png`;
           cy.task('mergeScreenshots', {
@@ -355,15 +474,18 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
           cy.then(() => {
             allViewportResults[view.name] = results;
           });
-        }).then(() => {
-          const sheetOrder = Object.keys(allViewportResults).sort((a, b) => parseInt(b.replace(/px/gi, '')) - parseInt(a.replace(/px/gi, '')));
-          cy.task('writeExcelSheets', {
-            filename: `./cypress/results/${urlData.name}-font-styles.xlsx`,
-            data: allViewportResults,
-            sheetOrder
-          });
+        }); // closes cy.wrap(viewports).each
+
+      // After all viewports for this URL
+      cy.then(() => {
+        const sheetOrder = Object.keys(allViewportResults).sort((a, b) => parseInt(b.replace(/px/gi, '')) - parseInt(a.replace(/px/gi, '')));
+        cy.task('writeExcelSheets', {
+          filename: `./cypress/results/${urlData.name}-font-styles.xlsx`,
+          data: allViewportResults,
+          sheetOrder
         });
       });
     });
-  });
+  }); 
+}); 
 });
