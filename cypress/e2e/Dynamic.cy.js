@@ -1,5 +1,7 @@
 const screenshotTempDir = './cypress/screenshots/temp';
 
+// Full test suite for font validation
+
 describe('Responsive Font Style Checker with Manual Scroll Option', () => {
   Cypress.config('defaultCommandTimeout', 3000000);
   Cypress.config('pageLoadTimeout', 3000000);
@@ -81,49 +83,74 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
     return { style, textContent: text };
   };
 
-  const injectOverlays = (doc, overlays) => {
-    doc.querySelectorAll('.font-check-overlay, .font-check-label').forEach(el => el.remove());
+    const injectOverlays = (doc, overlays, scrollY = 0) => {
+      doc.querySelectorAll('.font-check-overlay, .font-check-label').forEach(el => el.remove());
 
-    overlays.forEach(box => {
-      const overlay = doc.createElement('div');
-      Object.assign(overlay.style, {
-        position: 'absolute',
-        top: `${box.top}px`,
-        left: `${box.left}px`,
-        width: `${box.width}px`,
-        height: `${box.height}px`,
-        backgroundColor: 'rgba(0, 0, 0, 0.1)',
-        pointerEvents: 'none',
-        zIndex: 9999,
-        border: '1px solid rgba(0, 0, 0, 0.5)'
+      const labelGroups = {};
+      const spacingY = 6;
+      const labelHeight = 28;
+
+      overlays.forEach((box) => {
+        const { top, left, width, height, mismatchDetails, selector, variant } = box;
+
+        // 1. Draw semi-transparent overlay box
+        const overlay = doc.createElement('div');
+        Object.assign(overlay.style, {
+          position: 'absolute',
+          top: `${top - scrollY}px`,
+          left: `${left}px`,
+          width: `${width}px`,
+          height: `${height}px`,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          border: '1px',
+          pointerEvents: 'none',
+          zIndex: 9999,
+        });
+        overlay.classList.add('font-check-overlay');
+        doc.body.appendChild(overlay);
+
+        // 2. Prepare label text
+        const message = `Mismatch: ${selector} (${variant}) [` +
+          mismatchDetails
+            .filter(d => d.expected !== '-')
+            .map(d => `${d.prop}: expected ${d.expected}, actual ${d.actual}`)
+            .join(', ') +
+          ']';
+
+        // 3. Group by rounded element top-left coordinates
+        const key = `${Math.round(top)}-${Math.round(left)}`;
+        if (!labelGroups[key]) labelGroups[key] = [];
+        labelGroups[key].push({ text: message, top, left });
       });
-      overlay.classList.add('font-check-overlay');
-      doc.body.appendChild(overlay);
 
-      const mismatchDetails = box.mismatchDetails
-        .filter(d => d.expected !== '-')
-        .map(d => `${d.prop}: expected ${d.expected}, actual ${d.actual}`)
-        .join(', ');
-
-      const label = doc.createElement('div');
-      label.textContent = `Mismatch: ${box.selector} (${box.variant}) [${mismatchDetails}]`;
-      Object.assign(label.style, {
-        position: 'absolute',
-        top: `${box.top - 20}px`,
-        left: `${box.left}px`,
-        backgroundColor: 'rgba(255,255,255,0.85)',
-        color: 'red',
-        fontSize: '12px',
-        padding: '2px 4px',
-        zIndex: 10000,
-        fontWeight: 'bold',
-        borderRadius: '3px',
-        maxWidth: '350px'
+      // 4. Render labels grouped & stacked vertically
+      Object.values(labelGroups).forEach((group) => {
+        group.forEach((item, index) => {
+          const label = doc.createElement('div');
+          Object.assign(label.style, {
+            position: 'absolute',
+            top: `${item.top - scrollY - (index + 1) * (labelHeight + spacingY)}px`,
+            left: `${item.left}px`,
+            backgroundColor: 'rgba(255,255,255,0.95)',
+            color: 'red',
+            fontSize: '12px',
+            padding: '4px 8px',
+            fontWeight: 'bold',
+            maxWidth: '260px',
+            zIndex: 10000,
+            borderRadius: '4px',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+            pointerEvents: 'none',
+            whiteSpace: 'normal',
+          });
+          label.textContent = item.text;
+          label.classList.add('font-check-label');
+          doc.body.appendChild(label);
+        });
       });
-      label.classList.add('font-check-label');
-      doc.body.appendChild(label);
-    });
-  };
+    };
+
+
   before(() => {
     cy.task('readExcel', { filePath: './cypress/fixtures/Style Guide.xlsx' }).then(data => {
       const headers = data[0];
@@ -325,7 +352,7 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
               scrollY += (viewportHeight - overlap);
             }
 
-            const scrollAndCapture = index => {
+            const scrollAndCapture = (index) => {
               if (index >= positions.length) {
                 cy.window().then(w => w.scrollTo(0, 0));
                 return;
@@ -338,10 +365,17 @@ describe('Responsive Font Style Checker with Manual Scroll Option', () => {
               cy.wait(3000);
 
               const paddedIndex = String(index).padStart(3, '0');
-              cy.screenshot(`temp/${baseName}_screenshot_${paddedIndex}`, { capture: 'viewport' }).then(() => {
-                scrollAndCapture(index + 1);
+              const filename = `temp/${baseName}_screenshot_${paddedIndex}`;
+
+              cy.document().then(doc => {
+                injectOverlays(doc, overlays, positions[index]);
+              }).then(() => {
+                cy.screenshot(filename, { capture: 'viewport' }).then(() => {
+                  scrollAndCapture(index + 1);
+                });
               });
             };
+
 
             scrollAndCapture(0);
           });
